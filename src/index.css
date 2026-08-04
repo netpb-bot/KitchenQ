@@ -1,0 +1,91 @@
+@import 'tailwindcss';
+@import '@fontsource/poppins/400.css';
+@import '@fontsource/poppins/500.css';
+@import '@fontsource/poppins/600.css';
+@import '@fontsource/poppins/700.css';
+
+@theme {
+  /* ---- surfaces ---- */
+  --color-page: #f7f9f2;
+  --color-surface: #ffffff;
+  --color-surface-dark: #2e4a0c;
+  --color-surface-darker: #1e3308;
+
+  /* ---- brand ----
+     brand is the bright pickleball yellow-green. It is 2.48:1 against white,
+     so it NEVER carries white text — dark text only. Anything with a white
+     label uses `primary` instead (5.0:1). See contrast.test.ts. */
+  --color-brand: #7cb518;
+  --color-primary: #4a7c15;
+  --color-accent: #c6e82f;
+  --color-tint: #edf7d4;
+
+  /* ---- text ---- */
+  --color-ink: #1a2416;
+  --color-muted: #65745d;
+  --color-hairline: #e3ead8;
+
+  /* ---- semantic ----
+     `warn` / `danger` are the text-safe shades (used on white or on their own
+     tint). `warn-fill` is a background that carries ink text, never white. */
+  --color-warn: #8a5800;
+  --color-warn-fill: #f0b429;
+  --color-warn-tint: #fdf0d9;
+  --color-danger: #c0392b;
+  --color-danger-tint: #fbe9e7;
+
+  --font-sans: 'Poppins', ui-sans-serif, system-ui, sans-serif;
+
+  --shadow-card: 0 2px 12px rgba(26, 36, 22, 0.06);
+  --shadow-lift: 0 6px 20px rgba(26, 36, 22, 0.1);
+}
+
+:root {
+  color-scheme: light;
+  font-family: var(--font-sans);
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+html,
+body,
+#root {
+  min-height: 100svh;
+}
+
+body {
+  margin: 0;
+  background: var(--color-page);
+  color: var(--color-ink);
+  /* Installed-app behaviour: no rubber-band scroll, no iOS text inflation. */
+  overscroll-behavior-y: none;
+  -webkit-text-size-adjust: 100%;
+}
+
+/* Scores, standings and the fee list must align in columns. */
+.tnum {
+  font-variant-numeric: tabular-nums;
+}
+
+/* Used one-handed, standing, on a court. */
+button,
+a[role='button'],
+select,
+input {
+  min-height: 44px;
+}
+
+:focus-visible {
+  outline: 2px solid var(--color-primary);
+  outline-offset: 2px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
+}
