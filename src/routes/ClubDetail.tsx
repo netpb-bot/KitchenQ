@@ -1,6 +1,15 @@
 import { useState } from 'react'
 import { Link, useNavigate, useParams } from 'react-router-dom'
-import { Check, ChevronLeft, ChevronRight, Pencil, Plus, ShieldCheck, Users } from 'lucide-react'
+import {
+  Check,
+  ChevronLeft,
+  ChevronRight,
+  Pencil,
+  Plus,
+  ShieldCheck,
+  Trophy,
+  Users,
+} from 'lucide-react'
 import {
   TIERS,
   createSession,
@@ -8,6 +17,7 @@ import {
   isAdmin,
   isGuest,
   listClubLedger,
+  listClubMatches,
   listMembers,
   listSessions,
   money,
@@ -20,8 +30,10 @@ import {
   type Role,
   type Tier,
 } from '../lib/db'
+import { standings } from '../lib/standings'
 import { AddGuestForm, TIER_LABEL } from '../components/AddGuestForm'
 import { Avatar } from '../components/Avatar'
+import { RankingNote, StandingsList } from '../components/StandingsList'
 import {
   Button,
   Card,
@@ -40,16 +52,18 @@ export function ClubDetail() {
   const { clubId } = useParams<{ clubId: string }>()
   const id = clubId!
 
-  const [view, reload] = useAsync(
-    async () => ({
-      club: await getClub(id),
-      me: await myMember(id),
-      members: await listMembers(id),
-      sessions: await listSessions(id),
-      ledger: await listClubLedger(id),
-    }),
-    [id],
-  )
+  // In parallel: six sequential round trips is most of a second on a phone.
+  const [view, reload] = useAsync(async () => {
+    const [club, me, members, sessions, ledger, matches] = await Promise.all([
+      getClub(id),
+      myMember(id),
+      listMembers(id),
+      listSessions(id),
+      listClubLedger(id),
+      listClubMatches(id),
+    ])
+    return { club, me, members, sessions, ledger, matches }
+  }, [id])
   const [creating, setCreating] = useState(false)
 
   if (view.loading) return <Screen title="Club"><Loading /></Screen>
@@ -60,8 +74,12 @@ export function ClubDetail() {
       </Screen>
     )
 
-  const { club, me, members, sessions, ledger } = view.data!
+  const { club, me, members, sessions, ledger, matches } = view.data!
   const admin = isAdmin(me)
+  const table = standings(
+    members.map((m) => ({ memberId: m.id, name: m.display_name })),
+    matches,
+  )
 
   return (
     <Screen
@@ -70,7 +88,7 @@ export function ClubDetail() {
       lead={
         <Link
           to="/clubs"
-          className="-ml-1 inline-flex items-center gap-1 pt-3 text-sm font-semibold text-muted"
+          className="-ml-1 inline-flex min-h-11 items-center gap-1 pt-3 text-sm font-semibold text-muted"
         >
           <ChevronLeft size={18} aria-hidden />
           Clubs
@@ -137,6 +155,23 @@ export function ClubDetail() {
             </Link>
           ))}
         </div>
+      )}
+
+      <SectionHeading>Leaderboard</SectionHeading>
+      {table.length === 0 ? (
+        <EmptyState
+          icon={Trophy}
+          message="Nothing played yet."
+          hint="The all-time table builds itself as sessions are scored."
+        />
+      ) : (
+        <>
+          <p className="tnum -mt-1 mb-3 text-sm text-muted">
+            All time · {matches.length} {matches.length === 1 ? 'match' : 'matches'}
+          </p>
+          <StandingsList table={table} meId={me?.id} />
+          <RankingNote />
+        </>
       )}
 
       <Dues club={club} members={members} ledger={ledger} admin={admin} />

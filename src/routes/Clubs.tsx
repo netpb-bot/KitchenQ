@@ -15,6 +15,7 @@ import {
 } from '../components/ui'
 
 export function Clubs() {
+  const navigate = useNavigate()
   const [clubs, reload] = useAsync(listClubs, [])
   const [creating, setCreating] = useState(false)
 
@@ -84,9 +85,11 @@ export function Clubs() {
         <p className="min-w-0 flex-1 text-sm text-muted">
           A join code gets you into a session and its club in one step.
         </p>
-        <Link to="/join">
-          <Button variant="secondary">Join</Button>
-        </Link>
+        {/* Not a <Link> wrapping a <Button>: nesting them is invalid, and a
+            screen reader announces a link containing a button. */}
+        <Button variant="secondary" onClick={() => navigate('/join')}>
+          Join
+        </Button>
       </Card>
     </Screen>
   )

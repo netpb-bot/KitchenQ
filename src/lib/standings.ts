@@ -89,3 +89,48 @@ export function standings(
         x.name.localeCompare(y.name),
     )
 }
+
+/** One finished match, turned around to face the player looking at it. */
+export type PlayerMatch = {
+  match: Match
+  won: boolean
+  scoreMine: number
+  scoreTheirs: number
+  partnerIds: string[]
+  opponentIds: string[]
+}
+
+/**
+ * A player's finished matches, newest first, seen from their side of the net.
+ * Which team they were on is an accident of how the host tapped them in, so
+ * every screen showing "you won 11–7" has to flip the score — doing that once
+ * here is the difference between a record and a plausible-looking lie.
+ */
+export function playerMatches(memberId: string, matches: Match[]): PlayerMatch[] {
+  const mine: PlayerMatch[] = []
+
+  for (const m of matches) {
+    if (!m.ended_at || m.score_a === null || m.score_b === null) continue
+    const onA = m.team_a_ids.includes(memberId)
+    const onB = m.team_b_ids.includes(memberId)
+    if (!onA && !onB) continue
+
+    const ours = onA ? m.team_a_ids : m.team_b_ids
+    const theirs = onA ? m.team_b_ids : m.team_a_ids
+    const scoreMine = onA ? m.score_a : m.score_b
+    const scoreTheirs = onA ? m.score_b : m.score_a
+
+    mine.push({
+      match: m,
+      won: scoreMine > scoreTheirs,
+      scoreMine,
+      scoreTheirs,
+      partnerIds: ours.filter((id) => id !== memberId),
+      opponentIds: theirs,
+    })
+  }
+
+  return mine.sort(
+    (x, y) => new Date(y.match.ended_at!).getTime() - new Date(x.match.ended_at!).getTime(),
+  )
+}

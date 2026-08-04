@@ -85,6 +85,20 @@ export function Join() {
             />
           </Field>
 
+          {/* Worth saying out loud: silently showing nothing here is how a
+              returning player ends up as a second member with an empty record. */}
+          {complete && guests.loading && (
+            <p className="text-sm text-muted" role="status">
+              Checking this club for your name…
+            </p>
+          )}
+          {guests.error && (
+            <p className="text-sm font-medium text-warn" role="alert">
+              Couldn't check whether the host already has you on the roster. Joining
+              with your name below still works — tell the host so they can merge you.
+            </p>
+          )}
+
           {candidates.length > 0 && (
             <div className="rounded-xl bg-tint p-3">
               <p className="text-sm font-semibold text-ink">Already play here?</p>

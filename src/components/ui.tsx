@@ -103,7 +103,9 @@ export function Button({
 }) {
   return (
     <button
-      className={`inline-flex items-center justify-center gap-2 rounded-full px-5 text-sm font-semibold transition-colors disabled:pointer-events-none disabled:opacity-40 ${BUTTON_VARIANTS[variant]} ${full ? 'w-full' : ''} ${className}`}
+      // min-w matters for the icon-only buttons: at `px-3` with no label they
+      // come out 42px wide, two short of a usable target on a court.
+      className={`inline-flex min-w-11 items-center justify-center gap-2 rounded-full px-5 text-sm font-semibold transition-colors disabled:pointer-events-none disabled:opacity-40 ${BUTTON_VARIANTS[variant]} ${full ? 'w-full' : ''} ${className}`}
       {...props}
     >
       {Icon && <Icon size={18} strokeWidth={2.25} aria-hidden />}
@@ -214,17 +216,27 @@ export function Select({ className = '', ...props }: ComponentProps<'select'>) {
 
 /* ---------------------------------------------------------------- feedback */
 
-/** Inline error, for a failed load or a rejected write. */
+/**
+ * Inline error, for a failed load or a rejected write. `role="alert"` because
+ * these appear after the screen has settled — without it a failed save is
+ * completely silent to a screen reader.
+ */
 export function ErrorNote({ children }: { children: ReactNode }) {
   return (
     <Card className="border border-danger-tint">
-      <p className="break-words text-sm font-medium text-danger">{children}</p>
+      <p role="alert" className="break-words text-sm font-medium text-danger">
+        {children}
+      </p>
     </Card>
   )
 }
 
 export function Loading({ label = 'Loading…' }: { label?: string }) {
-  return <p className="py-8 text-center text-sm text-muted">{label}</p>
+  return (
+    <p role="status" className="py-8 text-center text-sm text-muted">
+      {label}
+    </p>
+  )
 }
 
 /* ------------------------------------------------------------- empty states */

@@ -6,6 +6,7 @@ import {
   isGuest,
   setPlayerStatus,
   startMatch,
+  useAction,
   type Match,
   type Member,
   type Session,
@@ -56,25 +57,29 @@ export function LiveSession({
     [players],
   )
 
-  const live = matches.filter((m) => !m.ended_at)
-  const finished = matches.filter((m) => m.ended_at)
+  const live = useMemo(() => matches.filter((m) => !m.ended_at), [matches])
+  const finished = useMemo(() => matches.filter((m) => m.ended_at), [matches])
 
   // Empty courts are filled in order, each suggestion excluding the players the
   // previous suggestion already claimed — otherwise two free courts propose the
   // same four people.
-  const suggestions = new Map<number, Lineup>()
-  const claimed = new Set<string>()
-  for (let court = 1; court <= session.court_count; court++) {
-    if (live.some((m) => m.court_number === court)) continue
-    const available = waiting.filter((p) => !claimed.has(p.memberId))
-    const lineup = pickNextMatch(
-      available,
-      finished.map((m) => ({ teamA: m.team_a_ids, teamB: m.team_b_ids })),
-    )
-    if (!lineup) break
-    suggestions.set(court, lineup)
-    ;[...lineup.teamA, ...lineup.teamB].forEach((id) => claimed.add(id))
-  }
+  //
+  // Memoised because each open court enumerates a few hundred candidate
+  // lineups, and the match timers re-render this component every second.
+  const suggestions = useMemo(() => {
+    const out = new Map<number, Lineup>()
+    const claimed = new Set<string>()
+    const history = finished.map((m) => ({ teamA: m.team_a_ids, teamB: m.team_b_ids }))
+    for (let court = 1; court <= session.court_count; court++) {
+      if (live.some((m) => m.court_number === court)) continue
+      const available = waiting.filter((p) => !claimed.has(p.memberId))
+      const lineup = pickNextMatch(available, history)
+      if (!lineup) break
+      out.set(court, lineup)
+      ;[...lineup.teamA, ...lineup.teamB].forEach((id) => claimed.add(id))
+    }
+    return out
+  }, [session.court_count, live, finished, waiting])
 
   return (
     <>
@@ -146,7 +151,6 @@ function LiveCourt({
   reload: () => void
 }) {
   const [scoring, setScoring] = useState(false)
-  const elapsed = useElapsed(match.started_at)
   const name = (id: string) => ({ name: names.get(id) ?? 'Unknown' })
   // The host always scores; players only when the session says they may.
   const canScore = admin || session.allow_player_scoring
@@ -155,10 +159,7 @@ function LiveCourt({
     <Card>
       <div className="flex items-center justify-between gap-3">
         <p className="font-semibold text-ink">Court {match.court_number}</p>
-        <span className="tnum inline-flex items-center gap-1.5 text-sm font-semibold text-primary">
-          <Timer size={16} strokeWidth={2.25} aria-hidden />
-          {elapsed}
-        </span>
+        <MatchTimer since={match.started_at} />
       </div>
 
       <div className="mt-3">
@@ -179,7 +180,7 @@ function LiveCourt({
           />
         ) : (
           <div className="mt-3 flex gap-2">
-            <Button full onClick={() => setScoring(true)}>
+            <Button full aria-expanded={false} onClick={() => setScoring(true)}>
               End match · enter score
             </Button>
             {admin && <CancelMatchButton matchId={match.id} reload={reload} />}
@@ -191,28 +192,39 @@ function LiveCourt({
 
 function CancelMatchButton({ matchId, reload }: { matchId: string; reload: () => void }) {
   const [confirming, setConfirming] = useState(false)
-  const [busy, setBusy] = useState(false)
+  const [busy, error, run] = useAction()
 
   if (!confirming) {
     return (
-      <Button variant="ghost" icon={X} onClick={() => setConfirming(true)} className="px-3">
+      <Button
+        variant="ghost"
+        icon={X}
+        aria-expanded={false}
+        onClick={() => setConfirming(true)}
+        className="px-3"
+      >
         Cancel
       </Button>
     )
   }
   return (
-    <Button
-      variant="danger"
-      disabled={busy}
-      className="px-3"
-      onClick={async () => {
-        setBusy(true)
-        await cancelMatch(matchId)
-        reload()
-      }}
-    >
-      Undo start?
-    </Button>
+    <div className="text-right">
+      <Button
+        variant="danger"
+        disabled={busy}
+        className="px-3"
+        autoFocus
+        onClick={() =>
+          run(async () => {
+            await cancelMatch(matchId)
+            reload()
+          })
+        }
+      >
+        Undo start?
+      </Button>
+      {error && <p className="mt-1 text-xs font-medium text-danger">{error}</p>}
+    </div>
   )
 }
 
@@ -445,7 +457,11 @@ function Queue({
       ) : (
         <Card className="divide-y divide-hairline p-0">
           {order.map((entry, index) => {
-            const player = byId.get(entry.memberId)!
+            // queueOrder is built from the same list as byId, so a miss cannot
+            // happen today — but a bare `!` here would take the whole live
+            // screen down mid-session if that ever stopped being true.
+            const player = byId.get(entry.memberId)
+            if (!player) return null
             return (
               <PlayerRow
                 key={player.id}
@@ -493,17 +509,16 @@ function PlayerRow({
   admin: boolean
   reload: () => void
 }) {
-  const [busy, setBusy] = useState(false)
+  const [busy, error, run] = useAction()
 
-  async function move(status: SessionPlayer['status']) {
-    setBusy(true)
-    await setPlayerStatus(player.id, status)
-    reload()
-    setBusy(false)
-  }
+  const move = (status: SessionPlayer['status']) =>
+    run(async () => {
+      await setPlayerStatus(player.id, status)
+      reload()
+    })
 
   return (
-    <div className="flex items-center gap-3 px-4 py-3">
+    <div className="flex flex-wrap items-center gap-3 px-4 py-3">
       {position !== undefined && (
         <span className="tnum w-5 shrink-0 text-sm font-bold text-muted">{position}</span>
       )}
@@ -523,12 +538,12 @@ function PlayerRow({
       {isGuest(player.club_members) && <Pill tone="neutral">Guest</Pill>}
 
       {isMe && player.status === 'waiting' && (
-        <Button variant="ghost" disabled={busy} className="px-3" onClick={() => void move('resting')}>
+        <Button variant="ghost" disabled={busy} className="px-3" onClick={() => move('resting')}>
           Sit out
         </Button>
       )}
       {isMe && player.status === 'resting' && (
-        <Button variant="secondary" disabled={busy} className="px-3" onClick={() => void move('waiting')}>
+        <Button variant="secondary" disabled={busy} className="px-3" onClick={() => move('waiting')}>
           I'm back
         </Button>
       )}
@@ -539,9 +554,11 @@ function PlayerRow({
           disabled={busy}
           className="px-3"
           aria-label={`Remove ${player.club_members.display_name}`}
-          onClick={() => void move('left')}
+          onClick={() => move('left')}
         />
       )}
+
+      {error && <p className="w-full text-sm font-medium text-danger">{error}</p>}
     </div>
   )
 }
@@ -549,7 +566,7 @@ function PlayerRow({
 /* -------------------------------------------------------------- add players */
 
 function AddPlayer({ data, reload }: { data: LiveData; reload: () => void }) {
-  const [busy, setBusy] = useState(false)
+  const [busy, error, run] = useAction()
   const inSession = new Set(
     data.players.filter((p) => p.status !== 'left').map((p) => p.club_members.id),
   )
@@ -569,12 +586,12 @@ function AddPlayer({ data, reload }: { data: LiveData; reload: () => void }) {
                 <button
                   key={member.id}
                   disabled={busy}
-                  onClick={async () => {
-                    setBusy(true)
-                    await addPlayer(data.session.id, member.id)
-                    reload()
-                    setBusy(false)
-                  }}
+                  onClick={() =>
+                    run(async () => {
+                      await addPlayer(data.session.id, member.id)
+                      reload()
+                    })
+                  }
                   className="inline-flex items-center gap-2 rounded-full bg-tint px-3 py-1.5 text-sm font-semibold text-primary"
                 >
                   <Plus size={14} strokeWidth={2.5} aria-hidden />
@@ -582,6 +599,7 @@ function AddPlayer({ data, reload }: { data: LiveData; reload: () => void }) {
                 </button>
               ))}
             </div>
+            {error && <p className="mt-2 text-sm font-medium text-danger">{error}</p>}
             <hr className="my-4 border-hairline" />
           </>
         )}
@@ -606,8 +624,15 @@ function AddPlayer({ data, reload }: { data: LiveData; reload: () => void }) {
 
 /* -------------------------------------------------------------------- timer */
 
-/** Wall-clock elapsed time as mm:ss, ticking once a second. */
-function useElapsed(since: string): string {
+/**
+ * Wall-clock elapsed time as mm:ss, ticking once a second.
+ *
+ * A component of its own rather than a hook in LiveCourt, because the tick is
+ * a state change and state changes re-render the component that owns them. Held
+ * one level up it redrew the court diagram — a fifteen-node SVG — once a second
+ * per court, all night, on the one screen that is never closed.
+ */
+function MatchTimer({ since }: { since: string }) {
   const [now, setNow] = useState(() => Date.now())
   useEffect(() => {
     const id = setInterval(() => setNow(Date.now()), 1000)
@@ -617,5 +642,11 @@ function useElapsed(since: string): string {
   const seconds = Math.max(0, Math.floor((now - new Date(since).getTime()) / 1000))
   const mm = Math.floor(seconds / 60)
   const ss = seconds % 60
-  return `${mm}:${String(ss).padStart(2, '0')}`
+
+  return (
+    <span className="tnum inline-flex items-center gap-1.5 text-sm font-semibold text-primary">
+      <Timer size={16} strokeWidth={2.25} aria-hidden />
+      {mm}:{String(ss).padStart(2, '0')}
+    </span>
+  )
 }

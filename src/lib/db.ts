@@ -374,6 +374,27 @@ export async function listMatches(sessionId: string): Promise<Match[]> {
   )
 }
 
+/**
+ * Every finished match in the club, newest first — the basis for all-time
+ * standings and a player's record. RLS already lets any club member read these
+ * (`matches_read`); the `sessions` embed is only there so the club filter has
+ * something to filter on, exactly as in `listClubLedger`.
+ */
+// ponytail: the whole history in one fetch. A club past ~5k matches wants a SQL
+// aggregate view instead — but truncating here would silently understate
+// someone's record, which is worse than a large response.
+export async function listClubMatches(clubId: string): Promise<Match[]> {
+  await ensureSession()
+  return ok(
+    await supabase
+      .from('matches')
+      .select(`${MATCH_COLS}, sessions!inner(club_id)`)
+      .eq('sessions.club_id', clubId)
+      .not('ended_at', 'is', null)
+      .order('ended_at', { ascending: false }),
+  )
+}
+
 export async function startMatch(
   sessionId: string,
   court: number,
@@ -452,22 +473,82 @@ export async function listClubLedger(clubId: string): Promise<LedgerEntry[]> {
   )
 }
 
+/**
+ * The caller's own ledger lines across every club they belong to. The
+ * `club_member_id` filter is load-bearing, not decorative: a host also matches
+ * `ledger_admin_all`, so without it this would return the whole club's rows and
+ * report someone else's debt as theirs.
+ */
+export async function listMyLedger(memberIds: string[]): Promise<LedgerEntry[]> {
+  if (memberIds.length === 0) return []
+  await ensureSession()
+  return ok(
+    await supabase.from('ledger_entries').select(LEDGER_COLS).in('club_member_id', memberIds),
+  )
+}
+
 /* ----------------------------------------------------------------- realtime */
+
+/**
+ * Trailing-edge debounce. One score save writes the match row, four
+ * session_players rows and up to four ledger rows, so the four subscriptions
+ * below see roughly nine events for a single tap — and each one would
+ * otherwise cost a seven-request refetch on gym wifi.
+ */
+export function debounce(fn: () => void, ms: number): (() => void) & { cancel: () => void } {
+  let timer: ReturnType<typeof setTimeout> | undefined
+  const run = () => {
+    clearTimeout(timer)
+    timer = setTimeout(fn, ms)
+  }
+  run.cancel = () => clearTimeout(timer)
+  return run
+}
+
+export type Connection = 'connecting' | 'live' | 'dropped'
 
 /**
  * Fires `onChange` on any roster or match change in this session — that covers
  * every screen the session tabs render, so one subscription is enough.
+ *
+ * `onConnection` is not decoration. A phone that screen-locks in a gym drops
+ * the socket, and without this the session screen goes on rendering the last
+ * roster it saw, looking perfectly healthy while two hosts diverge. Coming back
+ * up also forces a refetch: whatever changed while the socket was down is
+ * exactly what is now wrong on screen.
  */
-export function watchSession(sessionId: string, onChange: () => void): () => void {
+export function watchSession(
+  sessionId: string,
+  onChange: () => void,
+  onConnection?: (state: Connection) => void,
+): () => void {
   const filter = `session_id=eq.${sessionId}`
+  const changed = debounce(onChange, 250)
+  let wasDropped = false
+
   const channel = supabase
     .channel(`session:${sessionId}`)
-    .on('postgres_changes', { event: '*', schema: 'public', table: 'session_players', filter }, onChange)
-    .on('postgres_changes', { event: '*', schema: 'public', table: 'matches', filter }, onChange)
-    .on('postgres_changes', { event: '*', schema: 'public', table: 'ledger_entries', filter }, onChange)
-    .on('postgres_changes', { event: '*', schema: 'public', table: 'sessions', filter: `id=eq.${sessionId}` }, onChange)
-    .subscribe()
+    .on('postgres_changes', { event: '*', schema: 'public', table: 'session_players', filter }, changed)
+    .on('postgres_changes', { event: '*', schema: 'public', table: 'matches', filter }, changed)
+    .on('postgres_changes', { event: '*', schema: 'public', table: 'ledger_entries', filter }, changed)
+    .on('postgres_changes', { event: '*', schema: 'public', table: 'sessions', filter: `id=eq.${sessionId}` }, changed)
+    .subscribe((status) => {
+      if (status === 'SUBSCRIBED') {
+        onConnection?.('live')
+        if (wasDropped) {
+          wasDropped = false
+          onChange()
+        }
+        return
+      }
+      if (status === 'CHANNEL_ERROR' || status === 'TIMED_OUT' || status === 'CLOSED') {
+        wasDropped = true
+        onConnection?.('dropped')
+      }
+    })
+
   return () => {
+    changed.cancel()
     void supabase.removeChannel(channel)
   }
 }
@@ -501,6 +582,31 @@ export function useAsync<T>(
   }, [...deps, nonce])
 
   return [state, () => setNonce((n) => n + 1)]
+}
+
+/**
+ * Runs one write, and makes its failure visible. Replaces the
+ * `setBusy(true); await write(); reload(); setBusy(false)` shape that was
+ * repeated across the session screens with no `try` — where a rejection meant
+ * an unhandled promise, `setBusy(false)` never running, and a control that was
+ * dead for the rest of the night with nothing on screen to say why.
+ */
+export function useAction(): [boolean, string, (work: () => Promise<unknown>) => void] {
+  const [busy, setBusy] = useState(false)
+  const [error, setError] = useState('')
+
+  const run = (work: () => Promise<unknown>) => {
+    setBusy(true)
+    setError('')
+    work()
+      .then(
+        () => setError(''),
+        (e: unknown) => setError(e instanceof Error ? e.message : String(e)),
+      )
+      .finally(() => setBusy(false))
+  }
+
+  return [busy, error, run]
 }
 
 /** The player's own name, remembered so joining a second session is one tap. */

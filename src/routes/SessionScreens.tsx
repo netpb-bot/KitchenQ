@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import { Link, useParams } from 'react-router-dom'
+import { Link, useNavigate, useParams } from 'react-router-dom'
 import type { ReactNode } from 'react'
 import {
   Check,
@@ -24,16 +24,21 @@ import {
   myMember,
   setPlayerScoring,
   setSessionStatus,
+  useAction,
   useAsync,
   watchSession,
   type Club,
+  type Connection,
   type LedgerEntry,
   type Match,
   type Session,
 } from '../lib/db'
 import { standings, type Standing } from '../lib/standings'
+import { ConnectionBanner, isUnreachable } from '../components/ConnectionBanner'
 import { FeeSheet } from '../components/FeeSheet'
 import { LiveSession, type LiveData } from '../components/LiveSession'
+import { MatchResult } from '../components/MatchRow'
+import { RankingNote, StandingsList } from '../components/StandingsList'
 import { ScoreEntry } from '../components/ScoreEntry'
 import { Avatar } from '../components/Avatar'
 import {
@@ -55,9 +60,11 @@ type View = LiveData & { club: Club | null; ledger: LedgerEntry[] }
 function useSessionView(): [
   { loading: boolean; data?: View; error?: string },
   () => void,
+  Connection,
 ] {
   const { sessionId } = useParams<{ sessionId: string }>()
   const id = sessionId!
+  const [connection, setConnection] = useState<Connection>('connecting')
 
   const [view, reload] = useAsync(async (): Promise<View> => {
     const session = await getSession(id)
@@ -74,9 +81,9 @@ function useSessionView(): [
     return { session, me, players, matches, clubMembers, club, ledger }
   }, [id])
 
-  useEffect(() => watchSession(id, reload), [id])
+  useEffect(() => watchSession(id, reload, setConnection), [id])
 
-  return [view, reload]
+  return [view, reload, connection]
 }
 
 /**
@@ -90,7 +97,7 @@ function SessionScreen({
   title: string
   children: (view: View, reload: () => void) => ReactNode
 }) {
-  const [view, reload] = useSessionView()
+  const [view, reload, connection] = useSessionView()
 
   return (
     <Screen
@@ -98,7 +105,7 @@ function SessionScreen({
       lead={
         <Link
           to="/"
-          className="-ml-1 inline-flex items-center gap-1 pt-3 text-sm font-semibold text-muted"
+          className="-ml-1 inline-flex min-h-11 items-center gap-1 pt-3 text-sm font-semibold text-muted"
         >
           <ChevronLeft size={18} aria-hidden />
           Home
@@ -108,10 +115,17 @@ function SessionScreen({
       {view.loading ? (
         <Loading label="Loading session…" />
       ) : view.error ? (
-        <ErrorNote>{view.error}</ErrorNote>
+        // A session that can't be reached is a connection problem, not a stack
+        // trace the host can do anything with.
+        isUnreachable(view.error) ? (
+          <ConnectionBanner error={view.error} />
+        ) : (
+          <ErrorNote>{view.error}</ErrorNote>
+        )
       ) : (
         <>
           <SessionHeader view={view.data!} reload={reload} />
+          <ConnectionBanner state={connection} />
           {children(view.data!, reload)}
         </>
       )}
@@ -124,14 +138,13 @@ function SessionHeader({ view, reload }: { view: View; reload: () => void }) {
   const waiting = players.filter((p) => p.status === 'waiting').length
   const played = matches.filter((m) => m.ended_at).length
   const admin = isAdmin(me)
-  const [busy, setBusy] = useState(false)
+  const [busy, error, run] = useAction()
 
-  async function move(status: Session['status']) {
-    setBusy(true)
-    await setSessionStatus(session.id, status)
-    reload()
-    setBusy(false)
-  }
+  const move = (status: Session['status']) =>
+    run(async () => {
+      await setSessionStatus(session.id, status)
+      reload()
+    })
 
   return (
     <DarkCard>
@@ -159,13 +172,18 @@ function SessionHeader({ view, reload }: { view: View; reload: () => void }) {
       {admin && session.status !== 'ended' && (
         <div className="mt-4 border-t border-white/10 pt-4">
           {session.status === 'draft' ? (
-            <Button variant="brand" full disabled={busy} onClick={() => void move('live')}>
+            <Button variant="brand" full disabled={busy} onClick={() => move('live')}>
               Start session
             </Button>
           ) : (
-            <Button variant="danger" full disabled={busy} onClick={() => void move('ended')}>
+            <Button variant="danger" full disabled={busy} onClick={() => move('ended')}>
               End session
             </Button>
+          )}
+          {error && (
+            <p role="alert" className="mt-2 text-sm font-medium text-accent">
+              {error}
+            </p>
           )}
           <PlayerScoringToggle session={session} reload={reload} />
         </div>
@@ -185,81 +203,110 @@ function PlayerScoringToggle({
   session: Session
   reload: () => void
 }) {
-  const [busy, setBusy] = useState(false)
+  const [busy, error, run] = useAction()
 
   return (
-    <label className="mt-3 flex items-center justify-between gap-3">
-      <span className="text-sm font-medium text-white/80">
-        Players can enter their own score
-      </span>
-      <input
-        type="checkbox"
-        className="h-6 w-6 shrink-0 accent-brand"
-        checked={session.allow_player_scoring}
-        disabled={busy}
-        onChange={async (e) => {
-          setBusy(true)
-          await setPlayerScoring(session.id, e.target.checked)
-          reload()
-          setBusy(false)
-        }}
-      />
-    </label>
+    <>
+      {/* The whole row is the target: the box itself is only 24px wide. */}
+      <label className="mt-3 flex min-h-11 items-center justify-between gap-3">
+        <span className="text-sm font-medium text-white/80">
+          Players can enter their own score
+        </span>
+        <input
+          type="checkbox"
+          className="h-6 w-6 shrink-0 accent-brand"
+          checked={session.allow_player_scoring}
+          disabled={busy}
+          onChange={(e) => {
+            const allow = e.target.checked
+            run(async () => {
+              await setPlayerScoring(session.id, allow)
+              reload()
+            })
+          }}
+        />
+      </label>
+      {error && (
+        <p role="alert" className="text-sm font-medium text-accent">
+          {error}
+        </p>
+      )}
+    </>
   )
 }
 
 /**
  * Native share sheet where there is one, clipboard everywhere else. Returns
- * true when the link was copied, so the caller can say so — the share sheet
- * needs no confirmation of its own.
+ * 'copied' when the link went to the clipboard so the caller can say so — the
+ * share sheet needs no confirmation of its own.
+ *
+ * Clipboard writes reject on Safari without a user-gesture chain and wherever
+ * the permission is denied, so this reports the failure instead of letting it
+ * become an unhandled rejection and a button that appears to do nothing.
  */
-async function shareLink(url: string, title: string): Promise<boolean> {
+async function shareLink(url: string, title: string): Promise<'shared' | 'copied' | 'failed'> {
   if (navigator.share) {
     // Cancelling the share sheet rejects; that is not an error worth showing.
     await navigator.share({ title, url }).catch(() => {})
-    return false
+    return 'shared'
   }
-  await navigator.clipboard.writeText(url)
-  return true
+  try {
+    await navigator.clipboard.writeText(url)
+    return 'copied'
+  } catch {
+    return 'failed'
+  }
 }
 
 function ShareCode({ code }: { code: string }) {
-  const [copied, setCopied] = useState(false)
+  const [result, setResult] = useState<'copied' | 'failed' | null>(null)
   const url = `${location.origin}/join?code=${code}`
 
   async function share() {
-    if (!(await shareLink(url, 'Join our pickleball session'))) return
-    setCopied(true)
-    setTimeout(() => setCopied(false), 2000)
+    const outcome = await shareLink(url, 'Join our pickleball session')
+    if (outcome === 'shared') return
+    setResult(outcome)
+    setTimeout(() => setResult(null), 2000)
   }
 
   return (
     <button
       onClick={() => void share()}
-      className="shrink-0 rounded-xl bg-white/10 px-3 py-2 text-center"
+      aria-label={`Share join code ${code.split('').join(' ')}`}
+      className="min-h-11 shrink-0 rounded-xl bg-white/10 px-3 py-2 text-center"
     >
-      <span className="flex items-center justify-center gap-1 text-[10px] font-semibold uppercase tracking-wider text-white/60">
-        {copied ? <Check size={11} aria-hidden /> : <Share2 size={11} aria-hidden />}
-        {copied ? 'Copied' : 'Code'}
+      <span
+        aria-hidden
+        className="flex items-center justify-center gap-1 text-[10px] font-semibold uppercase tracking-wider text-white/60"
+      >
+        {result === 'copied' ? <Check size={11} /> : <Share2 size={11} />}
+        {result === 'copied' ? 'Copied' : result === 'failed' ? 'Copy failed' : 'Code'}
       </span>
-      <span className="tnum block text-base font-bold tracking-widest text-accent">{code}</span>
+      <span aria-hidden className="tnum block text-base font-bold tracking-widest text-accent">
+        {code}
+      </span>
+      {/* Announced only when it changes; the button's own name stays stable. */}
+      <span role="status" className="sr-only">
+        {result === 'copied'
+          ? 'Join link copied'
+          : result === 'failed'
+            ? 'Could not copy the link'
+            : ''}
+      </span>
     </button>
   )
 }
 
 /** Shown to anyone viewing a session they haven't entered yet. */
 function NotJoined({ code }: { code: string }) {
+  const navigate = useNavigate()
   return (
     <div className="mt-6">
       <EmptyState
         icon={Users}
         message="You're not in this session yet."
         hint="Join to appear on the queue."
-        action={
-          <Link to={`/join?code=${code}`}>
-            <Button>Join session</Button>
-          </Link>
-        }
+        action={<Button onClick={() => navigate(`/join?code=${code}`)}>Join session</Button>}
       />
     </div>
   )
@@ -322,36 +369,8 @@ export function SessionRanks() {
             {view.session.status === 'ended' && <Recap view={view} table={table} />}
 
             <SectionHeading>Standings</SectionHeading>
-            <Card className="divide-y divide-hairline p-0">
-              {table.map((row, i) => (
-                <div key={row.memberId} className="flex items-center gap-3 px-4 py-3">
-                  <span className="tnum w-5 shrink-0 text-sm font-bold text-muted">
-                    {i + 1}
-                  </span>
-                  <Avatar name={row.name} />
-                  <div className="min-w-0 flex-1">
-                    <p className="truncate font-semibold text-ink">
-                      {row.name}
-                      {row.memberId === view.me?.id && (
-                        <span className="ml-1.5 text-sm font-medium text-muted">(you)</span>
-                      )}
-                    </p>
-                    <p className="tnum mt-0.5 text-xs text-muted">
-                      {row.wins}–{row.losses} · {row.diff >= 0 ? '+' : ''}
-                      {row.diff} pts
-                    </p>
-                  </div>
-                  <span className="tnum text-base font-bold text-primary">
-                    {Math.round(row.rate * 100)}%
-                  </span>
-                </div>
-              ))}
-            </Card>
-            <p className="mt-3 text-xs leading-relaxed text-muted">
-              Ranked by adjusted win rate — a record is pulled toward 50% until you
-              have played enough games for it to mean something, so one lucky win
-              doesn't top the table. Ties break on point difference.
-            </p>
+            <StandingsList table={table} meId={view.me?.id} />
+            <RankingNote />
           </>
         )
       }}
@@ -363,7 +382,7 @@ export function SessionRanks() {
 function Recap({ view, table }: { view: View; table: Standing[] }) {
   const { session, players, matches } = view
   const played = matches.filter((m) => m.ended_at)
-  const [copied, setCopied] = useState(false)
+  const [shared, setShared] = useState<'copied' | 'failed' | null>(null)
   // Second, first, third — the podium reads left to right as it stands.
   const podium = [table[1], table[0], table[2]].filter(Boolean)
 
@@ -405,15 +424,22 @@ function Recap({ view, table }: { view: View; table: Standing[] }) {
           <Button
             variant="brand"
             full
-            icon={copied ? Check : Share2}
-            onClick={async () => {
-              if (await shareLink(location.href, `${session.name} — session wrapped`)) {
-                setCopied(true)
-                setTimeout(() => setCopied(false), 2000)
-              }
+            icon={shared === 'copied' ? Check : Share2}
+            onClick={() => {
+              void shareLink(location.href, `${session.name} — session wrapped`).then(
+                (outcome) => {
+                  if (outcome === 'shared') return
+                  setShared(outcome)
+                  setTimeout(() => setShared(null), 2000)
+                },
+              )
             }}
           >
-            {copied ? 'Link copied' : 'Share recap'}
+            {shared === 'copied'
+              ? 'Link copied'
+              : shared === 'failed'
+                ? 'Copy failed — long-press the address bar'
+                : 'Share recap'}
           </Button>
         </div>
       </DarkCard>
@@ -491,7 +517,6 @@ function FinishedMatch({
   reload: () => void
 }) {
   const [fixing, setFixing] = useState(false)
-  const aWon = (match.score_a ?? 0) > (match.score_b ?? 0)
 
   return (
     <Card>
@@ -504,12 +529,14 @@ function FinishedMatch({
           })}
         </span>
       </div>
-      <div className="mt-2 grid grid-cols-[1fr_auto_1fr] items-center gap-3">
-        <TeamLine ids={match.team_a_ids} names={names} won={aWon} />
-        <p className="tnum text-lg font-bold text-ink">
-          {match.score_a}–{match.score_b}
-        </p>
-        <TeamLine ids={match.team_b_ids} names={names} won={!aWon} align="right" />
+      <div className="mt-2">
+        <MatchResult
+          teamA={match.team_a_ids}
+          teamB={match.team_b_ids}
+          scoreA={match.score_a ?? 0}
+          scoreB={match.score_b ?? 0}
+          names={names}
+        />
       </div>
 
       {admin &&
@@ -534,39 +561,6 @@ function FinishedMatch({
         ))}
     </Card>
   )
-}
-
-function TeamLine({
-  ids,
-  names,
-  won,
-  align = 'left',
-}: {
-  ids: string[]
-  names: Map<string, string>
-  won: boolean
-  align?: 'left' | 'right'
-}) {
-  return (
-    <div className={align === 'right' ? 'text-right' : ''}>
-      <div
-        className={`flex items-center gap-1.5 ${align === 'right' ? 'justify-end' : ''}`}
-      >
-        {ids.map((id) => (
-          <Avatar key={id} name={names.get(id) ?? 'Unknown'} size="sm" />
-        ))}
-      </div>
-      <p
-        className={`mt-1 truncate text-xs ${won ? 'font-bold text-primary' : 'font-medium text-muted'}`}
-      >
-        {ids.map((id) => firstName(names.get(id) ?? 'Unknown')).join(' & ')}
-      </p>
-    </div>
-  )
-}
-
-function firstName(name: string): string {
-  return name.trim().split(/\s+/)[0] ?? name
 }
 
 export function SessionFees() {

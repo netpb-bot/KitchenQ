@@ -61,6 +61,35 @@ SPA fallback is configured (`vercel.json`, `public/_redirects`). It is what make
 a shared `/join?code=…` link work; without it that link 404s while the home page
 looks perfectly fine.
 
+## PWA
+
+Installs to a phone home screen and launches without browser chrome:
+`public/manifest.webmanifest`, `public/sw.js`, and the icons in `public/`.
+
+**The service worker fetches navigations from the network first**, falling back
+to the cached shell only when that fails. This is deliberate. Cache-first would
+pin a host to a stale build during a live session, which is a worse failure than
+having no offline support at all. Built assets carry a content hash in their
+filename, so those are cache-first and safe. Supabase is another origin and is
+never cached — the app assumes online and says plainly when it isn't.
+
+Bump `CACHE` in `public/sw.js` to retire every previous cache at once.
+
+### Icons
+
+```
+npm run icons
+```
+
+Regenerates every icon in `public/` from `KQ Logo.png`. The source has white
+baked into the corners of its rounded square, which reads as a rendering fault
+under a launcher mask, so `scripts/make-icons.mjs` floods that white out, extends
+the plate to a full-bleed square, downscales, and re-encodes — using only
+`node:zlib`, no image library. It re-decodes each file it writes and fails loudly
+rather than emitting a broken PNG.
+
+Run it after changing the logo; the outputs are committed.
+
 ## Notes
 
 - `npm audit` reports a high-severity advisory in `react-router`. It applies only

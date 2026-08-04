@@ -21,8 +21,8 @@ The outcome: a phone-first app where the host creates a session, players join wi
 | M2.5 — Guest players | **Built, awaiting a real session.** `0004_guests.sql` applied; 19/19 live checks pass. Host types in players without phones; they queue, play and are scored normally, and can claim their record later with the join code. |
 | M3 — Scoring, rankings, recap | **Built, awaiting a real session.** `0006_scoring.sql` — apply it, then `node verify-m3.mjs` (24 live checks). Tap steppers replace the number pad, standings rank on adjusted win rate, the recap podium appears when the session ends, and player self-scoring is a host toggle with host-only correction. |
 | M4 — Payments ledger | **Built, awaiting a real session.** `0007_ledger.sql` — apply it, then `node verify-m4.mjs` (25 live checks). The ledger is kept by database triggers, not the client: an entry appears however a player arrives, follows a change of fee, and survives their removal once money has been taken. Collection sheet with partial payments, plus club-wide dues. |
-| M5 — Home & profiles | Pending |
-| M6 — Polish & PWA | Pending |
+| M5 — Home & profiles | **Built, awaiting a real session.** No migration needed — `matches_read` already lets a club member read the club's whole history, so all-time stats are client aggregation over `standings()`. Run `node verify-m5.mjs` (21 live checks) and `npm test`. Home greets you and carries your record and what you owe; Profile has your all-time table and match history; the club screen has the all-time leaderboard. |
+| M6 — Polish & PWA | **Built, awaiting a real session.** No new dependency. Installs to a home screen and opens offline; eight writes that used to fail silently now report; a dropped realtime channel is visible and catches up on reconnect; one score save costs 7 requests instead of ~63. Run `npm test` (70) and `npm run icons`. |
 
 App name: **KitchenQ** — the kitchen (non-volley zone) plus the queue. Used in the document title, PWA manifest, and app header.
 
@@ -254,7 +254,10 @@ No medal icons in the live rankings list, no XP, no levels, no badges — per yo
 
 **Build:** Home dashboard — greeting, Host session / Join with code, your player card on a dark hero surface, live session card, unpaid balance · player profile with all-time adjusted win rate, games played, wins, losses, tier, and activity totals · match history · club leaderboard.
 
+The club leaderboard lives on the club screen, not on Profile — club-scoped data on the club screen, with Profile linking across. Profile's stats are scoped to one club (a rating only means something against the people you actually play); a club selector appears only for someone in more than one.
+
 **Verify:**
+- `node verify-m5.mjs` — cross-session reads stay inside one club, a non-member reads nothing, and the record matches a hand calculation.
 - Three club members on their own phones each answer "am I next?" and "what's my record?" in under 5 seconds, unprompted.
 
 ---
@@ -263,8 +266,23 @@ No medal icons in the live rankings list, no XP, no levels, no badges — per yo
 
 **Build:** PWA manifest and icons, offline shell, install prompt · loading/empty/error states everywhere · reconnecting indicator · accessibility pass (contrast, focus, touch targets, reduced motion) · performance check on a mid-range Android.
 
+An audit before starting found this was not a cosmetic pass. What it actually fixed:
+
+- **Home blanked the whole app on any load error** — it rendered an `ErrorNote` and then dereferenced the data that failed to arrive, with no error boundary to catch it.
+- **Eight writes failed silently** (start/end session, scoring toggle, cancel match, sit out, I'm back, remove player, add player). All followed `setBusy(true); await write(); reload(); setBusy(false)` with no `try`, so a rejection left the control permanently dead and said nothing. Replaced by one `useAction` hook rather than eight `try`/`catch` blocks.
+- **No connection state existed.** `.subscribe()` took no status callback, so a dropped socket looked exactly like a quiet night. It is now visible, and coming back up forces a refetch — the correctness half, since whatever changed while the socket was down is what is now wrong on screen.
+- **One score save fired ~63 requests** (nine realtime events × a seven-request refetch). Debouncing the callback in `watchSession` collapses it to 7.
+- **The favicon was still the purple Vite logo**, and 366KB of Devanagari Poppins subsets were being shipped to a Philippine club.
+
+**Decisions:** offline is shell-only with an honest "can't reach the club" state, matching the locked *assume online* connectivity decision — no offline writes and no stale data presented as truth. Everything is hand-rolled; no PWA plugin, no image library, no test-environment change.
+
+`navigator.onLine` is deliberately **not** the only signal: it reports true for any network interface, so gym wifi that connects but stops routing looks perfectly online while every request fails. A failed request is what the UI actually keys off (`isUnreachable`).
+
 **Verify:**
+- `npm test` — 70 checks, including the debounce and the unreachable-error classifier.
+- `npm run icons` — regenerates the icons from `KQ Logo.png` and asserts each file it writes.
 - Installs to home screen on iOS and Android, launches without browser chrome.
+- Deploy, open the installed app, deploy again, relaunch — the new build must appear. This is the one service-worker failure that matters.
 - Full session run-through on a mid-range phone without jank.
 
 ---

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { SHRINKAGE, adjustedWinRate, standings } from './standings'
+import { SHRINKAGE, adjustedWinRate, playerMatches, standings } from './standings'
 import type { Match } from './db'
 
 function roster(...names: string[]) {
@@ -131,5 +131,98 @@ describe('standings', () => {
     ])
     expect(table).toHaveLength(1)
     expect(table[0]).toMatchObject({ name: 'Ana', wins: 1, diff: 7 })
+  })
+})
+
+/** A whole match row, for the functions that need more than the score columns. */
+function played(
+  teamA: [string, string],
+  teamB: [string, string],
+  scoreA: number,
+  scoreB: number,
+  endedAt: string | null = '2026-08-04T12:00:00Z',
+): Match {
+  return {
+    id: `${teamA.join('')}-${teamB.join('')}-${endedAt}`,
+    session_id: 'session-1',
+    court_number: 1,
+    ...match(teamA, teamB, scoreA, scoreB),
+    started_at: '2026-08-04T11:30:00Z',
+    ended_at: endedAt,
+  }
+}
+
+describe('playerMatches', () => {
+  it('reads a win the same from either side of the net', () => {
+    // The same result, with Ana's team entered as A in one and as B in the
+    // other. Which side she was on is an accident of how the host tapped.
+    const asTeamA = playerMatches('Ana', [played(['Ana', 'Ben'], ['Cara', 'Dan'], 11, 7)])[0]
+    const asTeamB = playerMatches('Ana', [played(['Cara', 'Dan'], ['Ana', 'Ben'], 7, 11)])[0]
+
+    for (const m of [asTeamA, asTeamB]) {
+      expect(m.won).toBe(true)
+      expect(m.scoreMine).toBe(11)
+      expect(m.scoreTheirs).toBe(7)
+      expect(m.partnerIds).toEqual(['Ben'])
+      expect(m.opponentIds).toEqual(['Cara', 'Dan'])
+    }
+  })
+
+  it('reads a loss as a loss from either side', () => {
+    const asTeamA = playerMatches('Ana', [played(['Ana', 'Ben'], ['Cara', 'Dan'], 8, 11)])[0]
+    const asTeamB = playerMatches('Ana', [played(['Cara', 'Dan'], ['Ana', 'Ben'], 11, 8)])[0]
+
+    for (const m of [asTeamA, asTeamB]) {
+      expect(m.won).toBe(false)
+      expect(m.scoreMine).toBe(8)
+      expect(m.scoreTheirs).toBe(11)
+    }
+  })
+
+  it('leaves out matches the player was not in', () => {
+    const all = [
+      played(['Ana', 'Ben'], ['Cara', 'Dan'], 11, 7),
+      played(['Cara', 'Dan'], ['Eve', 'Fay'], 11, 5),
+    ]
+    expect(playerMatches('Ana', all)).toHaveLength(1)
+    expect(playerMatches('Eve', all)).toHaveLength(1)
+    expect(playerMatches('Nobody', all)).toEqual([])
+  })
+
+  it('leaves out matches still on court', () => {
+    const live: Match = {
+      ...played(['Ana', 'Ben'], ['Cara', 'Dan'], 0, 0, null),
+      score_a: null,
+      score_b: null,
+    }
+    expect(playerMatches('Ana', [live])).toEqual([])
+  })
+
+  it('returns newest first regardless of input order', () => {
+    const older = played(['Ana', 'Ben'], ['Cara', 'Dan'], 11, 7, '2026-08-04T19:00:00Z')
+    const newer = played(['Ana', 'Cara'], ['Ben', 'Dan'], 9, 11, '2026-08-04T20:30:00Z')
+    expect(playerMatches('Ana', [older, newer]).map((m) => m.match.ended_at)).toEqual([
+      newer.ended_at,
+      older.ended_at,
+    ])
+  })
+
+  it('agrees with the standings table on the same matches', () => {
+    // Two computations of one truth: if they ever disagree, a player's profile
+    // and the leaderboard are telling them different things about the same night.
+    const matches = [
+      played(['Ana', 'Ben'], ['Cara', 'Dan'], 11, 7, '2026-08-04T19:00:00Z'),
+      played(['Cara', 'Ana'], ['Ben', 'Dan'], 6, 11, '2026-08-04T19:40:00Z'),
+      played(['Dan', 'Ana'], ['Ben', 'Cara'], 11, 9, '2026-08-04T20:20:00Z'),
+    ]
+    const mine = playerMatches('Ana', matches)
+    const row = standings(roster('Ana', 'Ben', 'Cara', 'Dan'), matches).find(
+      (r) => r.name === 'Ana',
+    )!
+
+    expect(mine).toHaveLength(row.games)
+    expect(mine.filter((m) => m.won)).toHaveLength(row.wins)
+    expect(mine.reduce((sum, m) => sum + m.scoreMine, 0)).toBe(row.pointsFor)
+    expect(mine.reduce((sum, m) => sum + m.scoreTheirs, 0)).toBe(row.pointsAgainst)
   })
 })

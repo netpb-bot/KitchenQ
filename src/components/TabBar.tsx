@@ -39,7 +39,10 @@ export function TabBar({ tabs, label }: { tabs: Tab[]; label: string }) {
             to={to}
             end={end}
             className={({ isActive }) =>
-              `flex flex-col items-center justify-center gap-1 py-2.5 text-[11px] font-semibold transition-colors ${
+              // A NavLink is a plain <a>, which the 44px rule in index.css does
+              // not match. The app's most-tapped control should not depend on
+              // the icon size for its target height.
+              `flex min-h-14 flex-col items-center justify-center gap-1 py-2.5 text-[11px] font-semibold transition-colors ${
                 isActive ? 'text-primary' : 'text-muted'
               }`
             }

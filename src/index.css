@@ -1,8 +1,10 @@
 @import 'tailwindcss';
-@import '@fontsource/poppins/400.css';
-@import '@fontsource/poppins/500.css';
-@import '@fontsource/poppins/600.css';
-@import '@fontsource/poppins/700.css';
+/* Latin only. The unscoped imports also bundle the Devanagari subsets — about
+   360KB of fonts that no string in this app can render. */
+@import '@fontsource/poppins/latin-400.css';
+@import '@fontsource/poppins/latin-500.css';
+@import '@fontsource/poppins/latin-600.css';
+@import '@fontsource/poppins/latin-700.css';
 
 @theme {
   /* ---- surfaces ---- */
@@ -10,15 +12,25 @@
   --color-surface: #ffffff;
   --color-surface-dark: #2e4a0c;
   --color-surface-darker: #1e3308;
+  /* Backdrop behind the app column on a desktop browser, so the column reads
+     as a deliberate frame rather than a page that forgot its max-width. */
+  --color-surface-sunk: #e7eddc;
 
   /* ---- brand ----
      brand is the bright pickleball yellow-green. It is 2.48:1 against white,
      so it NEVER carries white text — dark text only. Anything with a white
-     label uses `primary` instead (5.0:1). See contrast.test.ts. */
+     label uses `primary` instead (5.0:1). See theme.test.ts. */
   --color-brand: #7cb518;
   --color-primary: #4a7c15;
   --color-accent: #c6e82f;
   --color-tint: #edf7d4;
+
+  /* ---- podium ----
+     Medal colours are their own thing: they mean first/second/third, not
+     brand. All three carry ink text, never white. */
+  --color-gold: #f0b429;
+  --color-silver: #c3ccbb;
+  --color-bronze: #cd7f32;
 
   /* ---- text ---- */
   --color-ink: #1a2416;
@@ -38,6 +50,17 @@
 
   --shadow-card: 0 2px 12px rgba(26, 36, 22, 0.06);
   --shadow-lift: 0 6px 20px rgba(26, 36, 22, 0.1);
+  --shadow-pop: 0 10px 30px rgba(26, 36, 22, 0.14);
+
+  /* Overshoots slightly, so a confirmation lands rather than fades. */
+  --ease-spring: cubic-bezier(0.34, 1.4, 0.64, 1);
+}
+
+/* The tab bar height and the scroll clearance under it were two magic numbers
+   in two files. One token now, so a taller bar cannot silently eat the last
+   row of content. */
+:root {
+  --tabbar-h: 3.5rem;
 }
 
 :root {
