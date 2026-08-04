@@ -48,9 +48,18 @@ npm run dev
 
 ## Deploy
 
-Static build, no server. Push to GitHub, then import the repo into Vercel or
-Netlify and set the two `VITE_*` variables in the project's environment settings.
-SPA fallback is already configured (`vercel.json`, `public/_redirects`).
+**Live: https://kitchen-q.vercel.app**
+
+Static build, no server. Vercel builds from `main` on every push, so deploying is
+`git push`.
+
+The two `VITE_*` variables are set in the Vercel project's environment settings.
+Vite inlines them **at build time**, so changing one means redeploying — editing
+it in the dashboard does nothing to the build already serving.
+
+SPA fallback is configured (`vercel.json`, `public/_redirects`). It is what makes
+a shared `/join?code=…` link work; without it that link 404s while the home page
+looks perfectly fine.
 
 ## Notes
 
