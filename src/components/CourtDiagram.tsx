@@ -1,4 +1,5 @@
 import { avatarColor, initials } from './Avatar'
+import { TIER_SHORT, type Tier } from '../lib/db'
 import { palette } from '../theme'
 
 /**
@@ -20,27 +21,35 @@ const H = FEET_WIDE * SCALE // 100
 const NET = W / 2
 const KITCHEN = KITCHEN_FEET * SCALE
 
-export type CourtSide = { name: string }[]
+export type CourtSide = { name: string; tier?: Tier }[]
 
 export function CourtDiagram({
   teamA,
   teamB,
   className = '',
+  muted,
 }: {
   /** Left half of the diagram. */
   teamA: CourtSide
   /** Right half. */
   teamB: CourtSide
   className?: string
+  /** Faded, for a court standing empty. */
+  muted?: boolean
 }) {
+  const empty = teamA.length === 0 && teamB.length === 0
   return (
     <svg
       viewBox={`0 0 ${W} ${H}`}
-      className={`w-full ${className}`}
+      className={`w-full ${muted ? 'opacity-45' : ''} ${className}`}
       role="img"
-      aria-label={`${teamA.map((p) => p.name).join(' and ')} versus ${teamB
-        .map((p) => p.name)
-        .join(' and ')}`}
+      aria-label={
+        empty
+          ? 'Empty court'
+          : `${teamA.map((p) => p.name).join(' and ')} versus ${teamB
+              .map((p) => p.name)
+              .join(' and ')}`
+      }
     >
       {/* Playing surface */}
       <rect x="0" y="0" width={W} height={H} rx="6" fill={palette.tint} />
@@ -77,12 +86,17 @@ export function CourtDiagram({
       />
 
       {teamA.map((player, i) => (
-        <PlayerMark key={`a${i}`} name={player.name} x={NET / 2} y={i === 0 ? H * 0.27 : H * 0.73} />
+        <PlayerMark
+          key={`a${i}`}
+          player={player}
+          x={NET / 2}
+          y={i === 0 ? H * 0.27 : H * 0.73}
+        />
       ))}
       {teamB.map((player, i) => (
         <PlayerMark
           key={`b${i}`}
-          name={player.name}
+          player={player}
           x={NET + NET / 2}
           y={i === 0 ? H * 0.27 : H * 0.73}
         />
@@ -91,7 +105,8 @@ export function CourtDiagram({
   )
 }
 
-function PlayerMark({ name, x, y }: { name: string; x: number; y: number }) {
+function PlayerMark({ player, x, y }: { player: CourtSide[number]; x: number; y: number }) {
+  const { name, tier } = player
   return (
     <g>
       <circle cx={x} cy={y} r="13" fill={avatarColor(name)} stroke={palette.surface} strokeWidth="2" />
@@ -106,9 +121,36 @@ function PlayerMark({ name, x, y }: { name: string; x: number; y: number }) {
       >
         {initials(name)}
       </text>
+      {/* Tier rides the avatar rather than the name line, so the four levels on
+          court can be compared without reading any words. */}
+      {tier && (
+        <>
+          <rect
+            x={x + 2}
+            y={y + 5}
+            width="18"
+            height="10"
+            rx="5"
+            fill={palette.surfaceDarker}
+            stroke={palette.surface}
+            strokeWidth="1.5"
+          />
+          <text
+            x={x + 11}
+            y={y + 10.5}
+            textAnchor="middle"
+            dominantBaseline="central"
+            fill={palette.accent}
+            fontSize="6.5"
+            fontWeight="700"
+          >
+            {TIER_SHORT[tier]}
+          </text>
+        </>
+      )}
       <text
         x={x}
-        y={y + 24}
+        y={y + 26}
         textAnchor="middle"
         fill={palette.ink}
         fontSize="9"

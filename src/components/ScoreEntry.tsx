@@ -59,11 +59,13 @@ export function ScoreEntry({
       {error && <p className="mt-2 text-sm font-medium text-danger">{error}</p>}
 
       <div className="mt-3 flex gap-2">
-        <Button full disabled={busy} onClick={() => void save()}>
-          {busy ? 'Saving…' : mode === 'correct' ? 'Save correction' : 'Save score'}
+        <Button full loading={busy} onClick={() => void save()}>
+          {mode === 'correct' ? 'Save correction' : 'Save score'}
         </Button>
+        {/* "Cancel", not "Back" — every other inline form in the app says
+            Cancel, and this one dismisses rather than navigating. */}
         <Button variant="ghost" onClick={onCancel} disabled={busy}>
-          Back
+          Cancel
         </Button>
       </div>
     </div>

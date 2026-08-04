@@ -1,5 +1,36 @@
+import { readFileSync } from 'node:fs'
 import { describe, expect, it } from 'vitest'
 import { FORBIDDEN_PAIRS, TEXT_PAIRS, contrast, palette } from './theme'
+
+/** `--color-foo-bar: #abc123;` -> `fooBar`, matching the palette's keys. */
+function camel(cssName: string): string {
+  return cssName.replace(/-([a-z])/g, (_, c: string) => c.toUpperCase())
+}
+
+describe('palette mirrors index.css', () => {
+  // The comment on `palette` claims index.css is the source of truth. Nothing
+  // enforced that, so editing a token in the CSS left the SVG court diagram
+  // painting the old colour with no test failing anywhere.
+  // Read off disk rather than imported: Vitest stubs CSS imports to an empty
+  // string, and `?raw` does not escape that.
+  const css = readFileSync(new URL('./index.css', import.meta.url), 'utf8')
+  const theme = css.slice(css.indexOf('@theme {'), css.indexOf('\n}', css.indexOf('@theme {')))
+  const declared = [...theme.matchAll(/--color-([a-z-]+):\s*(#[0-9a-fA-F]{6})/g)].map(
+    ([, name, hex]) => [camel(name), hex.toUpperCase()] as const,
+  )
+
+  it('finds every token in the CSS', () => {
+    expect(declared.length).toBeGreaterThan(10)
+  })
+
+  it.each(declared)('--color-%s matches palette', (key, hex) => {
+    expect(palette[key as keyof typeof palette]).toBe(hex)
+  })
+
+  it('has no palette entry the CSS does not declare', () => {
+    expect(Object.keys(palette).sort()).toEqual(declared.map(([k]) => k).sort())
+  })
+})
 
 describe('contrast', () => {
   it('matches known WCAG values', () => {

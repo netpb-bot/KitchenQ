@@ -1,13 +1,7 @@
 import { useRef, useState } from 'react'
 import { Plus } from 'lucide-react'
-import { TIERS, createGuest, type Member, type Tier } from '../lib/db'
+import { TIERS, TIER_LABEL, createGuest, type Member, type Tier } from '../lib/db'
 import { Button, Field, Input, Select } from './ui'
-
-export const TIER_LABEL: Record<Tier, string> = {
-  beginner: 'Beginner',
-  intermediate: 'Intermediate',
-  advanced: 'Advanced',
-}
 
 /**
  * Types in a player who has no phone. Used both mid-session and from the club
@@ -68,8 +62,8 @@ export function AddGuestForm({
         </Select>
       </Field>
       {error && <p className="text-sm font-medium text-danger">{error}</p>}
-      <Button type="submit" icon={Plus} full disabled={busy || !name.trim()}>
-        {busy ? 'Adding…' : submitLabel}
+      <Button type="submit" icon={Plus} full loading={busy} disabled={!name.trim()}>
+        {submitLabel}
       </Button>
     </form>
   )

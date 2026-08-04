@@ -7,11 +7,11 @@ import {
   Card,
   EmptyState,
   ErrorNote,
+  Eyebrow,
   Field,
   Input,
   Loading,
   Screen,
-  SectionHeading,
 } from '../components/ui'
 
 export function Clubs() {
@@ -22,17 +22,17 @@ export function Clubs() {
   return (
     <Screen
       title="Clubs"
-      subtitle="Your clubs and their members."
+      subtitle="Find your crew, or start your own."
       action={
         !creating && (
-          <Button variant="secondary" icon={Plus} onClick={() => setCreating(true)}>
+          <Button variant="secondary" size="sm" icon={Plus} onClick={() => setCreating(true)}>
             New
           </Button>
         )
       }
     >
       {creating && (
-        <div className="mt-2">
+        <div className="kq-rise mt-2">
           <CreateClubForm
             onCancel={() => setCreating(false)}
             onCreated={() => {
@@ -43,29 +43,24 @@ export function Clubs() {
         </div>
       )}
 
-      <SectionHeading>Your clubs</SectionHeading>
+      <Eyebrow className="mt-6 mb-2">Your clubs</Eyebrow>
       {clubs.loading ? (
         <Loading />
       ) : clubs.error ? (
-        <ErrorNote>{clubs.error}</ErrorNote>
+        <ErrorNote onRetry={reload}>{clubs.error}</ErrorNote>
       ) : clubs.data!.length === 0 ? (
+        // No action here: "New" is already in the header. Two buttons for one
+        // job on one screen made the empty state read as a different offer.
         <EmptyState
           icon={Users}
           message="You're not in a club yet."
-          hint="Create one to manage members, sessions, and dues — or join a session with a code and you'll be added to its club automatically."
-          action={
-            !creating && (
-              <Button icon={Plus} onClick={() => setCreating(true)}>
-                Create a club
-              </Button>
-            )
-          }
+          hint="Create one to manage members, sessions and dues — or join a session with a code and you'll be added to its club automatically."
         />
       ) : (
-        <div className="space-y-3">
+        <div className="kq-stagger space-y-3">
           {clubs.data!.map((club) => (
             <Link key={club.id} to={`/clubs/${club.id}`} className="block">
-              <Card className="flex items-center gap-3">
+              <Card interactive className="flex items-center gap-3">
                 <span className="flex h-11 w-11 shrink-0 items-center justify-center rounded-full bg-tint text-primary">
                   <Users size={20} strokeWidth={2.25} aria-hidden />
                 </span>
@@ -77,7 +72,7 @@ export function Clubs() {
         </div>
       )}
 
-      <SectionHeading>Playing tonight somewhere else?</SectionHeading>
+      <Eyebrow className="mt-7 mb-2">Playing somewhere else tonight?</Eyebrow>
       <Card className="flex items-center gap-3">
         <span className="flex h-11 w-11 shrink-0 items-center justify-center rounded-full bg-tint text-primary">
           <KeyRound size={20} strokeWidth={2.25} aria-hidden />
@@ -87,8 +82,8 @@ export function Clubs() {
         </p>
         {/* Not a <Link> wrapping a <Button>: nesting them is invalid, and a
             screen reader announces a link containing a button. */}
-        <Button variant="secondary" onClick={() => navigate('/join')}>
-          Join
+        <Button variant="secondary" size="sm" onClick={() => navigate('/join')}>
+          Enter code
         </Button>
       </Card>
     </Screen>
@@ -146,8 +141,8 @@ function CreateClubForm({
         </Field>
         {error && <p className="text-sm font-medium text-danger">{error}</p>}
         <div className="flex gap-2">
-          <Button type="submit" disabled={busy || !name.trim() || !ownerName.trim()} full>
-            {busy ? 'Creating…' : 'Create club'}
+          <Button type="submit" loading={busy} disabled={!name.trim() || !ownerName.trim()} full>
+            Create club
           </Button>
           <Button type="button" variant="ghost" onClick={onCancel} disabled={busy}>
             Cancel

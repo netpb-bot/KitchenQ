@@ -2,13 +2,15 @@
  * The palette, mirrored from the @theme block in index.css so it can be
  * asserted in tests and used where a JS value is genuinely needed (SVG fills
  * in the court diagram). index.css remains the source of truth for styling —
- * this is a typed copy, and contrast.test.ts fails if a pair drifts.
+ * this is a typed copy, and theme.test.ts fails if it drifts from the CSS or
+ * if a pair falls below contrast.
  */
 export const palette = {
   page: '#F7F9F2',
   surface: '#FFFFFF',
   surfaceDark: '#2E4A0C',
   surfaceDarker: '#1E3308',
+  surfaceSunk: '#E7EDDC',
 
   brand: '#7CB518',
   primary: '#4A7C15',
@@ -24,6 +26,11 @@ export const palette = {
   warnTint: '#FDF0D9',
   danger: '#C0392B',
   dangerTint: '#FBE9E7',
+
+  // Second and third on the podium. Gold is warnFill — the amber is already in
+  // the palette and a second near-identical yellow would be a token for nothing.
+  silver: '#C3CCBB',
+  bronze: '#CD7F32',
 } as const
 
 export type PaletteKey = keyof typeof palette
@@ -77,6 +84,10 @@ export const TEXT_PAIRS: Array<[PaletteKey, PaletteKey]> = [
   ['accent', 'surfaceDark'],
   ['surface', 'surfaceDarker'],
   ['accent', 'surfaceDarker'],
+
+  // Podium medals. All three carry ink, never white.
+  ['ink', 'silver'],
+  ['ink', 'bronze'],
 ]
 
 /** Pairs that must NEVER appear — asserted to fail, so a refactor can't sneak them in. */

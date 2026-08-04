@@ -4,7 +4,10 @@
     "target": "es2023",
     "lib": ["ES2023", "DOM"],
     "module": "esnext",
-    "types": ["vite/client"],
+    /* `node` is here for the *.test.ts files under src, which read source
+       files off disk (theme.test.ts checks the palette against index.css).
+       Vitest stubs CSS imports to an empty string, so `?raw` cannot do it. */
+    "types": ["vite/client", "node"],
     "allowArbitraryExtensions": true,
     "skipLibCheck": true,
 

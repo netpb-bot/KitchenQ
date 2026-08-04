@@ -4,6 +4,7 @@ import {
   ChevronRight,
   CalendarDays,
   ListOrdered,
+  Pencil,
   Percent,
   Sigma,
   Swords,
@@ -11,25 +12,32 @@ import {
   XCircle,
 } from 'lucide-react'
 import {
+  TIERS,
+  TIER_LABEL,
+  lastName,
   listClubMatches,
   listClubs,
   listMembers,
   listSessions,
   myMemberships,
+  updateMember,
+  useAction,
   useAsync,
   type Member,
+  type Tier,
 } from '../lib/db'
 import { playerMatches, standings, type PlayerMatch } from '../lib/standings'
-import { TIER_LABEL } from '../components/AddGuestForm'
 import { Avatar } from '../components/Avatar'
 import { MatchResult } from '../components/MatchRow'
 import { RankingNote } from '../components/StandingsList'
 import {
+  Button,
   Card,
   DarkCard,
   EmptyState,
   ErrorNote,
   Field,
+  Input,
   Loading,
   Pill,
   Screen,
@@ -44,7 +52,7 @@ const RECENT_MATCHES = 10
 export function Profile() {
   const [clubId, setClubId] = useState<string | null>(null)
 
-  const [view] = useAsync(async () => {
+  const [view, reload] = useAsync(async () => {
     const memberships = await myMemberships()
     const me = memberships.find((m) => m.club_id === clubId) ?? memberships[0] ?? null
     if (!me) return { memberships, me: null, clubNames: new Map<string, string>() }
@@ -82,7 +90,7 @@ export function Profile() {
   if (view.error) {
     return (
       <Screen title="Profile">
-        <ErrorNote>{view.error}</ErrorNote>
+        <ErrorNote onRetry={reload}>{view.error}</ErrorNote>
       </Screen>
     )
   }
@@ -125,7 +133,7 @@ export function Profile() {
       )}
 
       <div className="mt-4">
-        <ProfileHero me={me} record={record ?? null} />
+        <ProfileHero me={me} record={record ?? null} onChanged={reload} />
       </div>
 
       {record ? (
@@ -147,7 +155,7 @@ export function Profile() {
                 to={`/clubs/${me.club_id}`}
                 className="inline-flex min-h-11 items-center gap-1 text-sm font-semibold text-primary"
               >
-                Leaderboard
+                Standings
                 <ChevronRight size={16} aria-hidden />
               </Link>
             }
@@ -187,15 +195,19 @@ export function Profile() {
 function ProfileHero({
   me,
   record,
+  onChanged,
 }: {
   me: Member
   record: { games: number; wins: number; losses: number; rate: number } | null
+  onChanged: () => void
 }) {
+  const [editing, setEditing] = useState(false)
+
   return (
-    <DarkCard>
+    <DarkCard watermark={Swords}>
       <div className="flex items-center gap-4">
         <Avatar name={me.display_name} size="xl" />
-        <div className="min-w-0">
+        <div className="min-w-0 flex-1">
           <p className="truncate text-lg font-bold text-white">{me.display_name}</p>
           <div className="mt-2 flex flex-wrap items-center gap-1.5">
             <Pill tone="onDark">{TIER_LABEL[me.skill_tier]}</Pill>
@@ -204,7 +216,30 @@ function ProfileHero({
             )}
           </div>
         </div>
+        {/* Nobody could change their own name or level anywhere in the app: a
+            host could rename guests, but never themselves. */}
+        {!editing && (
+          <Button
+            variant="secondary"
+            size="sm"
+            icon={Pencil}
+            className="shrink-0 px-2"
+            aria-label="Edit your name and level"
+            onClick={() => setEditing(true)}
+          />
+        )}
       </div>
+
+      {editing && (
+        <SelfEdit
+          me={me}
+          onDone={() => setEditing(false)}
+          onChanged={() => {
+            setEditing(false)
+            onChanged()
+          }}
+        />
+      )}
 
       {record && (
         <div className="mt-4 grid grid-cols-4 gap-2 border-t border-white/10 pt-4">
@@ -220,6 +255,83 @@ function ProfileHero({
         </div>
       )}
     </DarkCard>
+  )
+}
+
+/**
+ * Rename yourself, and set your own level. Scoped to one club membership on
+ * purpose — the same person can be "Ken" at one club and "Kenneth A." at
+ * another, and the level that matters is the one their club plays them at.
+ */
+function SelfEdit({
+  me,
+  onDone,
+  onChanged,
+}: {
+  me: Member
+  onDone: () => void
+  onChanged: () => void
+}) {
+  const [name, setName] = useState(me.display_name)
+  const [tier, setTier] = useState<Tier>(me.skill_tier)
+  const [busy, error, run] = useAction()
+
+  const dirty = name.trim() !== me.display_name || tier !== me.skill_tier
+
+  return (
+    <form
+      className="kq-rise mt-4 space-y-3 border-t border-white/10 pt-4"
+      onSubmit={(e) => {
+        e.preventDefault()
+        run(async () => {
+          await updateMember(me.id, { display_name: name.trim(), skill_tier: tier })
+          lastName.set(name.trim())
+          onChanged()
+        })
+      }}
+    >
+      <label className="block">
+        <span className="text-sm font-semibold text-white">Your name</span>
+        <span className="mt-0.5 block text-xs text-white/60">
+          Shown on the queue, the courts and the standings.
+        </span>
+        <Input
+          value={name}
+          onChange={(e) => setName(e.target.value)}
+          maxLength={40}
+          autoFocus
+          required
+          className="mt-1.5"
+        />
+      </label>
+      <label className="block">
+        <span className="text-sm font-semibold text-white">Skill level</span>
+        <Select
+          value={tier}
+          onChange={(e) => setTier(e.target.value as Tier)}
+          className="mt-1.5"
+        >
+          {TIERS.map((t) => (
+            <option key={t} value={t}>
+              {TIER_LABEL[t]}
+            </option>
+          ))}
+        </Select>
+      </label>
+      {error && (
+        <p role="alert" className="text-sm font-medium text-accent">
+          {error}
+        </p>
+      )}
+      <div className="flex gap-2">
+        <Button type="submit" variant="brand" full loading={busy} disabled={!dirty || !name.trim()}>
+          Save
+        </Button>
+        <Button type="button" variant="ghost" className="text-white/70" onClick={onDone}>
+          Cancel
+        </Button>
+      </div>
+    </form>
   )
 }
 

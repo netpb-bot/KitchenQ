@@ -2,16 +2,17 @@ import { Component, useEffect } from 'react'
 import type { ErrorInfo, ReactNode } from 'react'
 import {
   BrowserRouter,
-  Navigate,
+  Link,
   Outlet,
   Route,
   Routes,
   useLocation,
   useParams,
 } from 'react-router-dom'
+import { Compass } from 'lucide-react'
 import { AppTabBar, TabBar, sessionTabs } from './components/TabBar'
 import { isConfigured } from './lib/supabase'
-import { Button, Card, Screen } from './components/ui'
+import { Button, Card, EmptyState, Screen } from './components/ui'
 import { Home } from './routes/Home'
 import { Clubs } from './routes/Clubs'
 import { ClubDetail } from './routes/ClubDetail'
@@ -57,9 +58,32 @@ function Router() {
           <Route path="fees" element={<SessionFees />} />
         </Route>
 
-        <Route path="*" element={<Navigate to="/" replace />} />
+        <Route element={<AppLayout />}>
+          <Route path="*" element={<NotFound />} />
+        </Route>
       </Routes>
     </BrowserRouter>
+  )
+}
+
+/**
+ * A mistyped or expired session link used to bounce silently to Home, which
+ * reads as the app losing the tap rather than as the link being wrong.
+ */
+function NotFound() {
+  return (
+    <Screen title="Nothing here" subtitle="That link doesn't point at anything.">
+      <EmptyState
+        icon={Compass}
+        message="This page doesn't exist."
+        hint="The session may have been deleted, or the link may have picked up a typo on its way to you."
+        action={
+          <Link to="/">
+            <Button>Back to Home</Button>
+          </Link>
+        }
+      />
+    </Screen>
   )
 }
 

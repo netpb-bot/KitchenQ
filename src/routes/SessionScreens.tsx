@@ -5,10 +5,13 @@ import {
   Check,
   ChevronLeft,
   Clock,
+  Crown,
   History,
   LayoutGrid,
   Pencil,
+  RotateCcw,
   Share2,
+  Sparkles,
   Timer,
   Trophy,
   Users,
@@ -22,6 +25,7 @@ import {
   listMembers,
   listSessionPlayers,
   myMember,
+  reopenSession,
   setPlayerScoring,
   setSessionStatus,
   useAction,
@@ -44,15 +48,19 @@ import { Avatar } from '../components/Avatar'
 import {
   Button,
   Card,
+  ConfirmButton,
   DarkCard,
   EmptyState,
   ErrorNote,
+  Eyebrow,
   Loading,
   Pill,
   Screen,
   SectionHeading,
+  StatCard,
   StatTile,
 } from '../components/ui'
+import { palette } from '../theme'
 
 type View = LiveData & { club: Club | null; ledger: LedgerEntry[] }
 
@@ -120,7 +128,7 @@ function SessionScreen({
         isUnreachable(view.error) ? (
           <ConnectionBanner error={view.error} />
         ) : (
-          <ErrorNote>{view.error}</ErrorNote>
+          <ErrorNote onRetry={reload}>{view.error}</ErrorNote>
         )
       ) : (
         <>
@@ -147,7 +155,7 @@ function SessionHeader({ view, reload }: { view: View; reload: () => void }) {
     })
 
   return (
-    <DarkCard>
+    <DarkCard watermark={Trophy}>
       <div className="flex items-start justify-between gap-3">
         <div className="min-w-0">
           {session.status === 'live' ? (
@@ -169,15 +177,39 @@ function SessionHeader({ view, reload }: { view: View; reload: () => void }) {
         <StatTile icon={Trophy} value={played} label="Matches" tone="onDark" />
       </div>
 
-      {admin && session.status !== 'ended' && (
+      {admin && (
         <div className="mt-4 border-t border-white/10 pt-4">
-          {session.status === 'draft' ? (
-            <Button variant="brand" full disabled={busy} onClick={() => move('live')}>
+          {session.status === 'draft' && (
+            <Button variant="brand" full loading={busy} onClick={() => move('live')}>
               Start session
             </Button>
-          ) : (
-            <Button variant="danger" full disabled={busy} onClick={() => move('ended')}>
-              End session
+          )}
+          {/* Ending is the one irreversible-looking action on this screen, so it
+              confirms — and reopening exists, so it is not irreversible at all. */}
+          {session.status === 'live' && (
+            <ConfirmButton
+              variant="danger"
+              full
+              label="End session"
+              confirmLabel="End it for everyone?"
+              busy={busy}
+              onConfirm={() => move('ended')}
+            />
+          )}
+          {session.status === 'ended' && (
+            <Button
+              variant="secondary"
+              icon={RotateCcw}
+              full
+              loading={busy}
+              onClick={() =>
+                run(async () => {
+                  await reopenSession(session.id)
+                  reload()
+                })
+              }
+            >
+              Reopen session
             </Button>
           )}
           {error && (
@@ -185,7 +217,9 @@ function SessionHeader({ view, reload }: { view: View; reload: () => void }) {
               {error}
             </p>
           )}
-          <PlayerScoringToggle session={session} reload={reload} />
+          {session.status !== 'ended' && (
+            <PlayerScoringToggle session={session} reload={reload} />
+          )}
         </div>
       )}
     </DarkCard>
@@ -297,17 +331,21 @@ function ShareCode({ code }: { code: string }) {
   )
 }
 
-/** Shown to anyone viewing a session they haven't entered yet. */
+/**
+ * A one-line prompt rather than a full empty state: it used to sit *above* the
+ * working queue, telling you you were not in the session while you looked at
+ * the whole thing.
+ */
 function NotJoined({ code }: { code: string }) {
   const navigate = useNavigate()
   return (
-    <div className="mt-6">
-      <EmptyState
-        icon={Users}
-        message="You're not in this session yet."
-        hint="Join to appear on the queue."
-        action={<Button onClick={() => navigate(`/join?code=${code}`)}>Join session</Button>}
-      />
+    <div className="mt-4 flex flex-wrap items-center gap-3 rounded-2xl bg-tint px-4 py-2.5">
+      <p className="min-w-0 flex-1 text-sm font-semibold text-primary">
+        You're watching, not playing.
+      </p>
+      <Button size="sm" onClick={() => navigate(`/join?code=${code}`)}>
+        Join the queue
+      </Button>
     </div>
   )
 }
@@ -378,71 +416,139 @@ export function SessionRanks() {
   )
 }
 
+/** Bar heights are proportional to wins, so the podium tells the truth. */
+const MEDALS = [palette.warnFill, palette.silver, palette.bronze]
+
 /** Shown once the session has ended. The only celebration surface in the app. */
 function Recap({ view, table }: { view: View; table: Standing[] }) {
   const { session, players, matches } = view
   const played = matches.filter((m) => m.ended_at)
   const [shared, setShared] = useState<'copied' | 'failed' | null>(null)
+  const winner = table[0]
   // Second, first, third — the podium reads left to right as it stands.
   const podium = [table[1], table[0], table[2]].filter(Boolean)
+  const mostWins = Math.max(1, ...podium.map((row) => row.wins))
 
   return (
-    <div className="mt-6">
-      <DarkCard>
-        <p className="text-center text-2xl font-bold text-white">Session wrapped!</p>
-        <p className="mt-1 text-center text-sm text-white/70">{session.name}</p>
+    <div className="mt-6 space-y-3">
+      {/* The eyebrow says what this is, so the headline is free to say who won
+          — naming the person is the whole point of a recap. */}
+      <div className="text-center">
+        <Eyebrow className="inline-flex items-center gap-1.5 text-primary">
+          <Sparkles size={12} strokeWidth={2.5} aria-hidden />
+          Session wrapped
+        </Eyebrow>
+        <h2 className="mt-1 text-2xl font-bold tracking-tight text-balance text-ink">
+          {winner ? `${winner.name} took the night!` : 'That’s a wrap!'}
+        </h2>
+        <p className="text-sm text-muted">{session.name}</p>
+      </div>
 
-        <div className="mt-6 flex items-end justify-center gap-3">
-          {podium.map((row) => {
-            const place = table.indexOf(row) + 1
-            return (
-              <div key={row.memberId} className="flex flex-col items-center gap-2">
-                <Avatar name={row.name} size={place === 1 ? 'lg' : 'md'} />
-                <p className="max-w-20 truncate text-center text-xs font-semibold text-white">
-                  {row.name}
-                </p>
-                <div
-                  className={`flex w-20 flex-col items-center justify-start rounded-t-xl bg-white/10 pt-2 ${
-                    place === 1 ? 'h-20' : place === 2 ? 'h-14' : 'h-10'
-                  }`}
-                >
-                  <span className="tnum text-lg font-bold text-accent">{place}</span>
+      {winner && (
+        <Card className="kq-pop relative overflow-hidden bg-tint">
+          <Trophy
+            size={130}
+            strokeWidth={1.25}
+            aria-hidden
+            className="pointer-events-none absolute -right-5 -bottom-7 text-primary/10"
+          />
+          <div className="relative flex items-center gap-3">
+            <span className="relative">
+              <Crown
+                size={22}
+                aria-hidden
+                className="absolute -top-3 -left-1 -rotate-12 text-warn-fill"
+                fill="currentColor"
+              />
+              <Avatar name={winner.name} size="lg" ring />
+            </span>
+            <div className="min-w-0 flex-1">
+              <Pill tone="neutral">#1</Pill>
+              <p className="mt-1 truncate text-xl font-bold text-ink">{winner.name}</p>
+              <p className="text-xs text-muted">out of {table.length} players</p>
+            </div>
+          </div>
+          <div className="relative mt-4 grid grid-cols-3 gap-2 border-t border-primary/15 pt-3 text-center">
+            <WinnerStat value={winner.wins} label={winner.wins === 1 ? 'Win' : 'Wins'} />
+            <WinnerStat value={winner.losses} label={winner.losses === 1 ? 'Loss' : 'Losses'} />
+            <WinnerStat
+              value={`${Math.round((winner.wins / Math.max(1, winner.games)) * 100)}%`}
+              label="Win rate"
+            />
+          </div>
+        </Card>
+      )}
+
+      {podium.length > 1 && (
+        <Card>
+          <Eyebrow>Podium</Eyebrow>
+          <div className="mt-3 flex items-end justify-center gap-3">
+            {podium.map((row) => {
+              const place = table.indexOf(row) + 1
+              return (
+                <div key={row.memberId} className="flex flex-1 flex-col items-center gap-1.5">
+                  <Avatar name={row.name} size={place === 1 ? 'lg' : 'md'} />
+                  <p className="w-full truncate text-center text-xs font-semibold text-ink">
+                    {row.name}
+                  </p>
+                  <p className="tnum text-[11px] text-muted">
+                    {row.wins}
+                    {row.wins === 1 ? ' win' : ' wins'}
+                  </p>
+                  <div
+                    className="kq-grow flex w-full items-start justify-center rounded-t-xl pt-2"
+                    style={{
+                      // Proportional to wins, floored so third place is still a
+                      // bar rather than a line.
+                      height: `${2 + (row.wins / mostWins) * 4}rem`,
+                      backgroundColor: MEDALS[place - 1],
+                      animationDelay: `${(4 - place) * 0.12}s`,
+                    }}
+                  >
+                    <span className="tnum text-lg font-bold text-ink">{place}</span>
+                  </div>
                 </div>
-              </div>
-            )
-          })}
-        </div>
-
-        <div className="mt-6 grid grid-cols-4 gap-2 border-t border-white/10 pt-4">
-          <StatTile icon={Clock} value={duration(session)} label="Duration" tone="onDark" />
-          <StatTile icon={Trophy} value={played.length} label="Matches" tone="onDark" />
-          <StatTile icon={Users} value={players.length} label="Players" tone="onDark" />
-          <StatTile icon={LayoutGrid} value={session.court_count} label="Courts" tone="onDark" />
-        </div>
-
-        <div className="mt-4">
-          <Button
-            variant="brand"
-            full
-            icon={shared === 'copied' ? Check : Share2}
-            onClick={() => {
-              void shareLink(location.href, `${session.name} — session wrapped`).then(
-                (outcome) => {
-                  if (outcome === 'shared') return
-                  setShared(outcome)
-                  setTimeout(() => setShared(null), 2000)
-                },
               )
-            }}
-          >
-            {shared === 'copied'
-              ? 'Link copied'
-              : shared === 'failed'
-                ? 'Copy failed — long-press the address bar'
-                : 'Share recap'}
-          </Button>
-        </div>
-      </DarkCard>
+            })}
+          </div>
+        </Card>
+      )}
+
+      <Eyebrow className="pt-2">Session stats</Eyebrow>
+      <div className="grid grid-cols-4 gap-2">
+        <StatCard icon={Clock} value={duration(session)} label="Duration" />
+        <StatCard icon={Trophy} value={played.length} label="Matches" tone="good" />
+        <StatCard icon={Users} value={players.length} label="Players" />
+        <StatCard icon={LayoutGrid} value={session.court_count} label="Courts" />
+      </div>
+
+      <Button
+        variant="brand"
+        full
+        icon={shared === 'copied' ? Check : Share2}
+        onClick={() => {
+          void shareLink(location.href, `${session.name} — session wrapped`).then((outcome) => {
+            if (outcome === 'shared') return
+            setShared(outcome)
+            setTimeout(() => setShared(null), 2000)
+          })
+        }}
+      >
+        {shared === 'copied'
+          ? 'Link copied'
+          : shared === 'failed'
+            ? 'Copy failed — long-press the address bar'
+            : 'Share recap'}
+      </Button>
+    </div>
+  )
+}
+
+function WinnerStat({ value, label }: { value: string | number; label: string }) {
+  return (
+    <div>
+      <p className="tnum text-2xl font-bold leading-none text-primary">{value}</p>
+      <p className="mt-1 text-[10px] font-medium uppercase tracking-wider text-muted">{label}</p>
     </div>
   )
 }
@@ -554,7 +660,7 @@ function FinishedMatch({
           />
         ) : (
           <div className="mt-2 flex justify-end">
-            <Button variant="ghost" icon={Pencil} onClick={() => setFixing(true)}>
+            <Button variant="ghost" size="sm" icon={Pencil} onClick={() => setFixing(true)}>
               Fix score
             </Button>
           </div>

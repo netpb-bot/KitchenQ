@@ -81,7 +81,11 @@ export function Join() {
               spellCheck={false}
               maxLength={6}
               required
-              className="tnum text-center text-2xl font-bold tracking-[0.3em]"
+              // Pops once the sixth character lands, so a code typed while
+              // walking in gets an acknowledgement without a status line.
+              className={`tnum text-center text-2xl font-bold tracking-[0.3em] ${
+                complete ? 'kq-pop border-primary bg-tint' : ''
+              }`}
             />
           </Field>
 
@@ -112,7 +116,7 @@ export function Join() {
                     type="button"
                     disabled={busy}
                     onClick={() => claim(guest)}
-                    className="inline-flex items-center gap-2 rounded-full bg-surface px-3 py-1.5 text-sm font-semibold text-ink"
+                    className="kq-chip inline-flex items-center gap-2 rounded-full bg-surface px-3 py-1.5 text-sm font-semibold text-ink transition-transform active:scale-95 disabled:opacity-40"
                   >
                     <Avatar name={guest.display_name} size="sm" />
                     {guest.display_name}
@@ -137,7 +141,7 @@ export function Join() {
           </Field>
 
           {name.trim() && (
-            <div className="flex items-center gap-3 rounded-xl bg-tint px-3 py-2.5">
+            <div className="kq-rise flex items-center gap-3 rounded-xl bg-tint px-3 py-2.5">
               <Avatar name={name.trim()} />
               <p className="text-sm text-ink">
                 Joining as <span className="font-semibold">{name.trim()}</span>
@@ -147,8 +151,8 @@ export function Join() {
 
           {error && <p className="text-sm font-medium text-danger">{error}</p>}
 
-          <Button type="submit" full disabled={busy || !complete || !name.trim()}>
-            {busy ? 'Joining…' : 'Join session'}
+          <Button type="submit" full loading={busy} disabled={!complete || !name.trim()}>
+            Join session
           </Button>
         </form>
       </Card>

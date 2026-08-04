@@ -27,10 +27,13 @@ export function TabBar({ tabs, label }: { tabs: Tab[]; label: string }) {
   return (
     <nav
       aria-label={label}
-      className="fixed inset-x-0 bottom-0 z-20 border-t border-hairline bg-surface pb-[env(safe-area-inset-bottom)]"
+      // Full-bleed on a phone, where it sits against the bottom edge. On a
+      // desktop browser it detaches into a floating pill the width of the app
+      // column — a nav bar spanning a 2560px monitor reads as a broken site.
+      className="fixed inset-x-0 bottom-0 z-20 border-t border-hairline bg-surface pb-[env(safe-area-inset-bottom)] md:inset-x-auto md:left-1/2 md:bottom-5 md:w-[26rem] md:-translate-x-1/2 md:rounded-full md:border md:pb-0 md:shadow-pop"
     >
       <div
-        className="grid"
+        className="grid md:px-2"
         style={{ gridTemplateColumns: `repeat(${tabs.length}, minmax(0, 1fr))` }}
       >
         {tabs.map(({ to, label: text, icon: Icon, end }) => (
@@ -42,8 +45,8 @@ export function TabBar({ tabs, label }: { tabs: Tab[]; label: string }) {
               // A NavLink is a plain <a>, which the 44px rule in index.css does
               // not match. The app's most-tapped control should not depend on
               // the icon size for its target height.
-              `flex min-h-14 flex-col items-center justify-center gap-1 py-2.5 text-[11px] font-semibold transition-colors ${
-                isActive ? 'text-primary' : 'text-muted'
+              `flex min-h-[var(--tabbar-h)] flex-col items-center justify-center gap-1 py-2.5 text-[11px] font-semibold transition-colors active:scale-95 md:rounded-full ${
+                isActive ? 'text-primary' : 'text-muted md:hover:bg-tint/50'
               }`
             }
           >

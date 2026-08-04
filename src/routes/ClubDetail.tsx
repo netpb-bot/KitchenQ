@@ -9,9 +9,11 @@ import {
   ShieldCheck,
   Trophy,
   Users,
+  X,
 } from 'lucide-react'
 import {
   TIERS,
+  TIER_LABEL,
   createSession,
   getClub,
   isAdmin,
@@ -31,7 +33,7 @@ import {
   type Tier,
 } from '../lib/db'
 import { standings } from '../lib/standings'
-import { AddGuestForm, TIER_LABEL } from '../components/AddGuestForm'
+import { AddGuestForm } from '../components/AddGuestForm'
 import { Avatar } from '../components/Avatar'
 import { RankingNote, StandingsList } from '../components/StandingsList'
 import {
@@ -70,7 +72,7 @@ export function ClubDetail() {
   if (view.error)
     return (
       <Screen title="Club">
-        <ErrorNote>{view.error}</ErrorNote>
+        <ErrorNote onRetry={reload}>{view.error}</ErrorNote>
       </Screen>
     )
 
@@ -98,7 +100,7 @@ export function ClubDetail() {
       <SectionHeading
         action={
           admin && !creating ? (
-            <Button variant="secondary" icon={Plus} onClick={() => setCreating(true)}>
+            <Button variant="secondary" size="sm" icon={Plus} onClick={() => setCreating(true)}>
               New
             </Button>
           ) : undefined
@@ -130,10 +132,13 @@ export function ClubDetail() {
           }
         />
       ) : (
-        <div className="space-y-3">
+        <div className="kq-stagger space-y-3">
           {sessions.map((s) => (
             <Link key={s.id} to={`/session/${s.id}`} className="block">
-              <Card className="flex items-center gap-3">
+              <Card
+                interactive
+                className={`flex items-center gap-3 ${s.status === 'live' ? 'ring-1 ring-brand/40' : ''}`}
+              >
                 <div className="min-w-0 flex-1">
                   <p className="truncate font-semibold text-ink">{s.name}</p>
                   <p className="tnum mt-0.5 text-sm text-muted">
@@ -157,7 +162,9 @@ export function ClubDetail() {
         </div>
       )}
 
-      <SectionHeading>Leaderboard</SectionHeading>
+      {/* "Standings" everywhere. This table was called three different things
+          across the app — Ranks, Standings and Leaderboard — for one list. */}
+      <SectionHeading>Standings</SectionHeading>
       {table.length === 0 ? (
         <EmptyState
           icon={Trophy}
@@ -331,13 +338,24 @@ function MemberRow({
             />
             <Button
               icon={Check}
-              disabled={busy || !renaming.trim()}
+              loading={busy}
+              disabled={!renaming.trim()}
               className="px-3"
               aria-label="Save name"
               onClick={async () => {
                 await patch({ display_name: renaming.trim() })
                 setRenaming(null)
               }}
+            />
+            {/* There was no way out of this state but to save or leave the
+                screen. Every other inline form in the app has a Cancel. */}
+            <Button
+              variant="ghost"
+              icon={X}
+              disabled={busy}
+              className="px-2"
+              aria-label="Cancel rename"
+              onClick={() => setRenaming(null)}
             />
           </div>
         )}
@@ -384,14 +402,16 @@ function MemberRow({
               />
             )
           ) : (
+            // "Remove" here demoted a co-host, while "Remove" on a queue row
+            // removes the person. One of them had to change its word.
             <Button
               variant={member.role === 'admin' ? 'ghost' : 'secondary'}
+              size="sm"
               icon={ShieldCheck}
               disabled={busy}
               onClick={() => void patch({ role: member.role === 'admin' ? 'member' : 'admin' })}
-              className="px-3"
             >
-              {member.role === 'admin' ? 'Remove' : 'Co-host'}
+              {member.role === 'admin' ? 'Make member' : 'Make co-host'}
             </Button>
           )}
         </div>

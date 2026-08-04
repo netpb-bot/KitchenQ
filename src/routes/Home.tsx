@@ -12,6 +12,7 @@ import {
   WifiOff,
 } from 'lucide-react'
 import {
+  TIER_LABEL,
   listClubMatches,
   listClubs,
   listMembers,
@@ -30,6 +31,7 @@ import { ConnectionBanner, isUnreachable, useOffline } from '../components/Conne
 import { InstallPrompt } from '../components/InstallPrompt'
 import { firstName } from '../components/MatchRow'
 import {
+  Button,
   Card,
   DarkCard,
   EmptyState,
@@ -43,7 +45,7 @@ import {
 
 export function Home() {
   const offline = useOffline()
-  const [view] = useAsync(async () => {
+  const [view, reload] = useAsync(async () => {
     const clubs = await listClubs()
     const [sessions, memberships] = await Promise.all([
       listOpenSessions(clubs.map((c) => c.id)),
@@ -74,7 +76,9 @@ export function Home() {
   }, [])
 
   const d = view.data
-  const greeting = d?.me ? `${timeOfDay()}, ${firstName(d.me.display_name)}` : 'KitchenQ'
+  // The greeting is the lead, not the h1. As the h1 it made RouteFocus announce
+  // "Good evening, Ken" as the name of the page on every return to Home.
+  const greeting = d?.me ? `${timeOfDay()}, ${firstName(d.me.display_name)}` : null
   // `loading` is false on failure too, so every block below has to key off the
   // data itself — keying off `loading` alone is what made an error blank the app.
   const ready = Boolean(d)
@@ -90,13 +94,16 @@ export function Home() {
 
   return (
     <Screen
-      title={greeting}
-      subtitle={d?.me ? 'Ready for your next match?' : 'Queue · Rankings · Fees'}
+      title={d?.me ? 'Ready for your next match?' : 'Welcome to KitchenQ'}
+      subtitle={d?.me ? undefined : 'Queue · Rankings · Fees'}
+      lead={
+        greeting && <p className="pt-3 text-sm font-medium text-muted">{greeting}</p>
+      }
     >
       {/* An unreachable server has its own plain-language banner; repeating it
           as "TypeError: Failed to fetch" tells the player nothing they can act
           on. Anything else is a real error and is shown as one. */}
-      {view.error && !unreachable && <ErrorNote>{view.error}</ErrorNote>}
+      {view.error && !unreachable && <ErrorNote onRetry={reload}>{view.error}</ErrorNote>}
       <ConnectionBanner error={view.error} />
       <InstallPrompt />
 
@@ -109,7 +116,13 @@ export function Home() {
           message={
             unreachable ? 'Tonight will show up once you have signal.' : "Couldn't load your sessions."
           }
-          hint={unreachable ? undefined : 'Reload the page to try again.'}
+          action={
+            unreachable ? undefined : (
+              <Button variant="secondary" size="sm" onClick={reload}>
+                Try again
+              </Button>
+            )
+          }
         />
       ) : d!.sessions.length === 0 ? (
         <EmptyState
@@ -118,7 +131,7 @@ export function Home() {
           hint="Sessions your clubs have open show up here."
         />
       ) : (
-        <div className="space-y-3">
+        <div className="kq-stagger space-y-3">
           {d!.sessions.map((s) => (
             <SessionCard key={s.id} session={s} />
           ))}
@@ -133,7 +146,16 @@ export function Home() {
           to={d?.clubs.length === 1 ? `/clubs/${d.clubs[0].id}` : '/clubs'}
           icon={Plus}
           title="Host a session"
-          detail="Set your courts and share the join code."
+          // The single-club path lands on the club, where the session form is.
+          // With none or several it lands on the list first, and promising the
+          // court settings there would be a lie.
+          detail={
+            d?.clubs.length === 1
+              ? 'Set your courts and share the join code.'
+              : d?.clubs.length === 0
+                ? 'Create a club first — it takes one field.'
+                : 'Pick which club is playing tonight.'
+          }
           dark
         />
         <ActionCard
@@ -196,13 +218,13 @@ function PlayerCard({
 
   return (
     <Link to="/profile" className="block">
-      <DarkCard>
+      <DarkCard watermark={Swords} className="transition-transform active:scale-[0.99]">
         <div className="flex items-center gap-4">
           <Avatar name={me.display_name} size="lg" />
           <div className="min-w-0 flex-1">
             <p className="truncate font-semibold text-white">{me.display_name}</p>
             <div className="mt-1.5 flex items-center gap-2">
-              <Pill tone="onDark">{me.skill_tier}</Pill>
+              <Pill tone="onDark">{TIER_LABEL[me.skill_tier]}</Pill>
               {club && <span className="truncate text-sm text-white/70">{club.name}</span>}
             </div>
           </div>
@@ -241,7 +263,10 @@ function timeOfDay(): string {
 function SessionCard({ session }: { session: Session }) {
   return (
     <Link to={`/session/${session.id}`} className="block">
-      <Card className="flex items-center gap-3">
+      <Card
+        interactive
+        className={`flex items-center gap-3 ${session.status === 'live' ? 'ring-1 ring-brand/40' : ''}`}
+      >
         <div className="min-w-0 flex-1">
           <p className="truncate font-semibold text-ink">{session.name}</p>
           <p className="tnum mt-0.5 text-sm text-muted">
@@ -275,21 +300,47 @@ function ActionCard({
   detail: string
   dark?: boolean
 }) {
-  const Surface = dark ? DarkCard : Card
   return (
     <Link to={to} className="block">
-      <Surface className="flex items-center gap-4">
-        <span
-          className={`flex h-11 w-11 shrink-0 items-center justify-center rounded-full ${dark ? 'bg-white/15 text-accent' : 'bg-tint text-primary'}`}
+      {dark ? (
+        <DarkCard
+          watermark={Icon}
+          className="flex items-center gap-4 transition-transform active:scale-[0.99]"
         >
-          <Icon size={20} strokeWidth={2.25} aria-hidden />
-        </span>
-        <div className="min-w-0 flex-1">
-          <p className={`font-semibold ${dark ? 'text-white' : 'text-ink'}`}>{title}</p>
-          <p className={`mt-0.5 text-sm ${dark ? 'text-white/70' : 'text-muted'}`}>{detail}</p>
-        </div>
-        <ChevronRight size={20} className={dark ? 'text-white/50' : 'text-muted'} aria-hidden />
-      </Surface>
+          <ActionBody icon={Icon} title={title} detail={detail} dark />
+        </DarkCard>
+      ) : (
+        <Card interactive className="flex items-center gap-4">
+          <ActionBody icon={Icon} title={title} detail={detail} />
+        </Card>
+      )}
     </Link>
+  )
+}
+
+function ActionBody({
+  icon: Icon,
+  title,
+  detail,
+  dark,
+}: {
+  icon: typeof Plus
+  title: string
+  detail: string
+  dark?: boolean
+}) {
+  return (
+    <>
+      <span
+        className={`flex h-11 w-11 shrink-0 items-center justify-center rounded-full ${dark ? 'bg-white/15 text-accent' : 'bg-tint text-primary'}`}
+      >
+        <Icon size={20} strokeWidth={2.25} aria-hidden />
+      </span>
+      <div className="min-w-0 flex-1">
+        <p className={`font-semibold ${dark ? 'text-white' : 'text-ink'}`}>{title}</p>
+        <p className={`mt-0.5 text-sm ${dark ? 'text-white/70' : 'text-muted'}`}>{detail}</p>
+      </div>
+      <ChevronRight size={20} className={dark ? 'text-white/50' : 'text-muted'} aria-hidden />
+    </>
   )
 }

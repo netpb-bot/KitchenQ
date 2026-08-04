@@ -5,6 +5,20 @@ import { supabase } from './supabase'
 
 export const TIERS = ['beginner', 'intermediate', 'advanced'] as const
 export type Tier = (typeof TIERS)[number]
+
+/** The tier enum is lowercase; it must never reach a screen unlabelled. */
+export const TIER_LABEL: Record<Tier, string> = {
+  beginner: 'Beginner',
+  intermediate: 'Intermediate',
+  advanced: 'Advanced',
+}
+
+/** For the badge that overlaps an avatar, where there is room for three characters. */
+export const TIER_SHORT: Record<Tier, string> = {
+  beginner: 'BEG',
+  intermediate: 'INT',
+  advanced: 'ADV',
+}
 export type Role = 'owner' | 'admin' | 'member'
 export type SessionStatus = 'draft' | 'live' | 'ended'
 
@@ -313,9 +327,42 @@ export async function setSessionStatus(
   ok(await supabase.from('sessions').update({ status, ...stamp }).eq('id', sessionId))
 }
 
+/**
+ * Undo an accidental "End session". Deliberately not setSessionStatus('live'):
+ * that stamps a fresh started_at, which would reset the recap's duration and
+ * make a night that ran three hours read as one minute.
+ */
+export async function reopenSession(sessionId: string): Promise<void> {
+  ok(await supabase.from('sessions').update({ status: 'live', ended_at: null }).eq('id', sessionId))
+}
+
 /** Session toggle: let the players on court record their own score. */
 export async function setPlayerScoring(sessionId: string, allow: boolean): Promise<void> {
   ok(await supabase.from('sessions').update({ allow_player_scoring: allow }).eq('id', sessionId))
+}
+
+/**
+ * Courts open or close mid-session all the time — a group leaves, the club
+ * hands over a spare. Clamped to the same 1–12 the create form uses.
+ *
+ * Shrinking below a court with a live match on it is refused rather than
+ * silently orphaning that match: the diagram is keyed on court number, so the
+ * match would simply stop being rendered while still holding four players.
+ */
+export async function setCourtCount(sessionId: string, count: number): Promise<void> {
+  const courts = Math.min(12, Math.max(1, Math.round(count)))
+  const live = ok<{ court_number: number }[]>(
+    await supabase
+      .from('matches')
+      .select('court_number')
+      .eq('session_id', sessionId)
+      .is('ended_at', null),
+  )
+  const highest = live.reduce((max, m) => Math.max(max, m.court_number), 0)
+  if (courts < highest) {
+    throw new Error(`Court ${highest} still has a match on it. End it first.`)
+  }
+  ok(await supabase.from('sessions').update({ court_count: courts }).eq('id', sessionId))
 }
 
 /** Returns the session id so the caller can navigate straight into it. */

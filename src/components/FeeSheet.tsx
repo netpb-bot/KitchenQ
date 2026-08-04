@@ -1,5 +1,5 @@
 import { useState } from 'react'
-import { Banknote, Check, HandCoins, Pencil, Users } from 'lucide-react'
+import { Banknote, Check, HandCoins, Pencil } from 'lucide-react'
 import {
   money,
   recordPayment,
@@ -10,7 +10,17 @@ import {
   type SessionPlayer,
 } from '../lib/db'
 import { Avatar } from './Avatar'
-import { Button, Card, EmptyState, Field, Input, Pill, SectionHeading, StatTile } from './ui'
+import {
+  Button,
+  Card,
+  ConfirmButton,
+  EmptyState,
+  Field,
+  Input,
+  Pill,
+  SectionHeading,
+  StatCard,
+} from './ui'
 
 /**
  * The host's collection sheet, filled in during the session while the cash is
@@ -88,27 +98,34 @@ export function FeeSheet({
   const collected = rows.reduce((sum, e) => sum + e.amount_paid, 0)
   const settled = rows.filter((e) => e.status === 'paid').length
 
+  const outstanding = Math.max(0, due - collected)
+
   return (
     <>
       <SectionHeading>Collection</SectionHeading>
-      <Card>
-        <div className="grid grid-cols-4 gap-2">
-          <StatTile icon={HandCoins} value={money(collected, currency)} label="Collected" />
-          <StatTile
-            icon={Banknote}
-            value={money(Math.max(0, due - collected), currency)}
-            label="Outstanding"
-          />
-          <StatTile icon={Check} value={`${settled}/${rows.length}`} label="Settled" />
-          <StatTile icon={Users} value={rows.length} label="Players" />
-        </div>
-        {session.fee_amount > 0 && (
-          <p className="mt-3 border-t border-hairline pt-3 text-center text-xs text-muted">
-            {money(session.fee_amount, currency)} per player. Change the fee and every
-            unpaid line updates with it.
-          </p>
-        )}
-      </Card>
+      {/* Player count lives on the session header two rows up; repeating it here
+          bought a fourth card and no new information. */}
+      <div className="grid grid-cols-3 gap-2">
+        <StatCard
+          icon={HandCoins}
+          value={money(collected, currency)}
+          label="Collected"
+          tone="good"
+        />
+        <StatCard
+          icon={Banknote}
+          value={money(outstanding, currency)}
+          label="Outstanding"
+          tone={outstanding > 0 ? 'danger' : 'default'}
+        />
+        <StatCard icon={Check} value={`${settled}/${rows.length}`} label="Settled" />
+      </div>
+      {session.fee_amount > 0 && (
+        <p className="mt-3 text-center text-xs text-muted">
+          {money(session.fee_amount, currency)} per player. Change the fee and every
+          unpaid line updates with it.
+        </p>
+      )}
 
       <SectionHeading>Players</SectionHeading>
       <Card className="divide-y divide-hairline p-0">
@@ -189,13 +206,20 @@ function FeeRow({
         {admin && !editing && (
           <div className="flex items-center gap-1">
             {entry.status === 'paid' ? (
-              <Button variant="ghost" disabled={busy} className="px-3" onClick={() => void pay(0)}>
-                Undo
-              </Button>
+              // Confirmed: this wipes a recorded payment and sits one finger-width
+              // from "Mark paid".
+              <ConfirmButton
+                variant="ghost"
+                size="sm"
+                label="Undo"
+                confirmLabel="Clear this payment?"
+                busy={busy}
+                onConfirm={() => void pay(0)}
+              />
             ) : (
               <Button
-                disabled={busy}
-                className="px-3"
+                size="sm"
+                loading={busy}
                 onClick={() => void pay(entry.amount_due)}
               >
                 Mark paid
@@ -204,9 +228,10 @@ function FeeRow({
             {/* Partial payments are the exception, so they sit behind a tap. */}
             <Button
               variant="ghost"
+              size="sm"
               icon={Pencil}
               disabled={busy}
-              className="px-3"
+              className="px-2"
               aria-label={`Enter an exact amount for ${name}`}
               onClick={() => setEditing(true)}
             />
@@ -265,8 +290,8 @@ function PartialForm({
         />
       </Field>
       <div className="mt-3 flex gap-2">
-        <Button type="submit" full disabled={busy || amount === ''}>
-          {busy ? 'Saving…' : 'Save'}
+        <Button type="submit" full loading={busy} disabled={amount === ''}>
+          Save
         </Button>
         <Button type="button" variant="ghost" onClick={onCancel} disabled={busy}>
           Cancel

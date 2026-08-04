@@ -1,9 +1,20 @@
 import { useEffect, useMemo, useState } from 'react'
-import { LayoutGrid, Play, Plus, Shuffle, Timer, UserMinus, X } from 'lucide-react'
 import {
+  Minus,
+  Play,
+  Plus,
+  Shuffle,
+  Timer,
+  Undo2,
+  UserMinus,
+  UserPlus,
+} from 'lucide-react'
+import {
+  TIER_LABEL,
   addPlayer,
   cancelMatch,
   isGuest,
+  setCourtCount,
   setPlayerStatus,
   startMatch,
   useAction,
@@ -11,13 +22,23 @@ import {
   type Member,
   type Session,
   type SessionPlayer,
+  type Tier,
 } from '../lib/db'
 import { pickNextMatch, queueOrder, type Lineup, type QueuePlayer } from '../lib/queue'
 import { AddGuestForm } from './AddGuestForm'
-import { Avatar } from './Avatar'
+import { Avatar, TierBadge } from './Avatar'
 import { CourtDiagram } from './CourtDiagram'
 import { ScoreEntry } from './ScoreEntry'
-import { Button, Card, EmptyState, Pill, SectionHeading } from './ui'
+import {
+  Button,
+  Card,
+  ConfirmButton,
+  EmptyState,
+  Eyebrow,
+  Pill,
+  SectionHeading,
+  UndoBar,
+} from './ui'
 
 export type LiveData = {
   session: Session
@@ -37,9 +58,17 @@ export function LiveSession({
   reload: () => void
 }) {
   const { session, me, players, matches } = data
+  const [adding, setAdding] = useState(false)
 
   const names = useMemo(
     () => new Map(players.map((p) => [p.club_members.id, p.club_members.display_name])),
+    [players],
+  )
+
+  // Kept beside `names` rather than folded into it: ScoreEntry takes the name
+  // map as-is, and only the court diagram needs the tier.
+  const tiers = useMemo(
+    () => new Map(players.map((p) => [p.club_members.id, p.club_members.skill_tier])),
     [players],
   )
 
@@ -83,8 +112,10 @@ export function LiveSession({
 
   return (
     <>
-      <SectionHeading>Courts</SectionHeading>
-      <div className="space-y-3">
+      <SectionHeading action={admin && <CourtCount session={session} live={live} reload={reload} />}>
+        Courts
+      </SectionHeading>
+      <div className="kq-stagger space-y-3">
         {Array.from({ length: session.court_count }, (_, i) => i + 1).map((court) => {
           const match = live.find((m) => m.court_number === court)
           return match ? (
@@ -92,6 +123,7 @@ export function LiveSession({
               key={court}
               match={match}
               names={names}
+              tiers={tiers}
               session={session}
               admin={admin}
               reload={reload}
@@ -111,9 +143,18 @@ export function LiveSession({
         })}
       </div>
 
-      <Queue players={players} me={me} admin={admin} reload={reload} />
+      <Queue
+        players={players}
+        me={me}
+        admin={admin}
+        adding={adding}
+        onToggleAdd={() => setAdding((open) => !open)}
+        reload={reload}
+      />
 
-      {admin && <AddPlayer data={data} reload={reload} />}
+      {admin && adding && (
+        <AddPlayer data={data} reload={reload} onDone={() => setAdding(false)} />
+      )}
     </>
   )
 }
@@ -135,37 +176,102 @@ function claimedByOtherCourts(
   return claimed
 }
 
+/**
+ * Courts open and close mid-session — a group leaves, the club hands over a
+ * spare. Removing one is refused server-side while a match is on it, so this
+ * hides the control rather than offering an action that will be rejected.
+ */
+function CourtCount({
+  session,
+  live,
+  reload,
+}: {
+  session: Session
+  live: Match[]
+  reload: () => void
+}) {
+  const [busy, error, run] = useAction()
+  const highest = live.reduce((max, m) => Math.max(max, m.court_number), 0)
+
+  const set = (count: number) =>
+    run(async () => {
+      await setCourtCount(session.id, count)
+      reload()
+    })
+
+  return (
+    <div className="flex items-center gap-1.5">
+      {error && <span className="text-xs font-medium text-danger">{error}</span>}
+      <Button
+        variant="secondary"
+        size="sm"
+        icon={Minus}
+        aria-label="Remove a court"
+        className="px-2"
+        disabled={busy || session.court_count <= 1 || session.court_count <= highest}
+        onClick={() => set(session.court_count - 1)}
+      />
+      <Button
+        variant="secondary"
+        size="sm"
+        icon={Plus}
+        className="px-3"
+        disabled={busy || session.court_count >= 12}
+        onClick={() => set(session.court_count + 1)}
+      >
+        Court
+      </Button>
+    </div>
+  )
+}
+
 /* -------------------------------------------------------------- live court */
+
+/** Court number and elapsed time, the pair that heads every court card. */
+function CourtLabel({ court, children }: { court: number; children?: React.ReactNode }) {
+  return (
+    <div className="flex items-center gap-2">
+      <Eyebrow>Court {court}</Eyebrow>
+      {children}
+    </div>
+  )
+}
 
 function LiveCourt({
   match,
   names,
+  tiers,
   session,
   admin,
   reload,
 }: {
   match: Match
   names: Map<string, string>
+  tiers: Map<string, Tier>
   session: Session
   admin: boolean
   reload: () => void
 }) {
   const [scoring, setScoring] = useState(false)
-  const name = (id: string) => ({ name: names.get(id) ?? 'Unknown' })
+  const onCourt = (id: string) => ({ name: names.get(id) ?? 'Unknown', tier: tiers.get(id) })
   // The host always scores; players only when the session says they may.
   const canScore = admin || session.allow_player_scoring
 
   return (
-    <Card>
+    <Card className="ring-1 ring-brand/25">
       <div className="flex items-center justify-between gap-3">
-        <p className="font-semibold text-ink">Court {match.court_number}</p>
-        <MatchTimer since={match.started_at} />
+        <CourtLabel court={match.court_number}>
+          <MatchTimer since={match.started_at} />
+        </CourtLabel>
+        <Pill tone="live" dot>
+          LIVE
+        </Pill>
       </div>
 
       <div className="mt-3">
         <CourtDiagram
-          teamA={match.team_a_ids.map(name)}
-          teamB={match.team_b_ids.map(name)}
+          teamA={match.team_a_ids.map(onCourt)}
+          teamB={match.team_b_ids.map(onCourt)}
         />
       </div>
 
@@ -179,52 +285,39 @@ function LiveCourt({
             onSaved={reload}
           />
         ) : (
-          <div className="mt-3 flex gap-2">
-            <Button full aria-expanded={false} onClick={() => setScoring(true)}>
+          <>
+            <Button full className="mt-3" onClick={() => setScoring(true)}>
               End match · enter score
             </Button>
-            {admin && <CancelMatchButton matchId={match.id} reload={reload} />}
-          </div>
+            {admin && (
+              <div className="mt-2 flex justify-center">
+                <CancelMatchButton matchId={match.id} reload={reload} />
+              </div>
+            )}
+          </>
         ))}
     </Card>
   )
 }
 
 function CancelMatchButton({ matchId, reload }: { matchId: string; reload: () => void }) {
-  const [confirming, setConfirming] = useState(false)
   const [busy, error, run] = useAction()
-
-  if (!confirming) {
-    return (
-      <Button
-        variant="ghost"
-        icon={X}
-        aria-expanded={false}
-        onClick={() => setConfirming(true)}
-        className="px-3"
-      >
-        Cancel
-      </Button>
-    )
-  }
   return (
-    <div className="text-right">
-      <Button
-        variant="danger"
-        disabled={busy}
-        className="px-3"
-        autoFocus
-        onClick={() =>
-          run(async () => {
-            await cancelMatch(matchId)
-            reload()
-          })
-        }
-      >
-        Undo start?
-      </Button>
-      {error && <p className="mt-1 text-xs font-medium text-danger">{error}</p>}
-    </div>
+    <ConfirmButton
+      variant="ghost"
+      size="sm"
+      icon={Undo2}
+      label="Cancel match · undo start"
+      confirmLabel="Put everyone back in the queue?"
+      busy={busy}
+      error={error}
+      onConfirm={() =>
+        run(async () => {
+          await cancelMatch(matchId)
+          reload()
+        })
+      }
+    />
   )
 }
 
@@ -266,25 +359,24 @@ function OpenCourt({
     if (!override.every((id) => stillWaiting.has(id))) setOverride(null)
   }, [waiting, override])
 
-  if (!admin) {
-    return (
-      <Card className="flex items-center gap-3">
-        <span className="flex h-11 w-11 shrink-0 items-center justify-center rounded-full bg-tint text-primary">
-          <LayoutGrid size={20} strokeWidth={2.25} aria-hidden />
-        </span>
-        <p className="min-w-0 flex-1 font-semibold text-ink">Court {court} is open</p>
-      </Card>
-    )
-  }
-
-  if (!lineup) {
+  // Players see the same card shape as a live court, so the screen keeps its
+  // rhythm instead of collapsing to a single line of text between matches.
+  if (!admin || !lineup) {
     return (
       <Card>
-        <p className="font-semibold text-ink">Court {court} is open</p>
-        <p className="mt-1 text-sm text-muted">
-          {session.status === 'live'
-            ? 'Four players need to be in the queue before a match can start.'
-            : 'Start the session to put a match on court.'}
+        <div className="flex items-center justify-between gap-3">
+          <CourtLabel court={court} />
+          <Pill tone="neutral">Open</Pill>
+        </div>
+        <div className="mt-3">
+          <CourtDiagram teamA={[]} teamB={[]} muted />
+        </div>
+        <p className="mt-3 text-center text-sm text-muted">
+          {session.status !== 'live'
+            ? 'Start the session to put a match on court.'
+            : admin
+              ? 'Four players need to be in the queue before a match can start.'
+              : 'Waiting on the next match.'}
         </p>
       </Card>
     )
@@ -327,7 +419,7 @@ function OpenCourt({
   return (
     <Card>
       <div className="flex items-center justify-between gap-3">
-        <p className="font-semibold text-ink">Court {court}</p>
+        <CourtLabel court={court} />
         <Pill tone="neutral">Next up</Pill>
       </div>
 
@@ -338,7 +430,7 @@ function OpenCourt({
       </div>
 
       {slot !== null && (
-        <div className="mt-3 rounded-xl bg-tint p-3">
+        <div className="kq-rise mt-3 rounded-xl bg-tint p-3">
           <p className="text-sm font-semibold text-ink">
             {bench.length > 0 ? 'Swap in a player from the queue' : 'Nobody else is waiting'}
           </p>
@@ -347,7 +439,7 @@ function OpenCourt({
               <button
                 key={p.memberId}
                 onClick={() => substitute(p.memberId)}
-                className="inline-flex items-center gap-2 rounded-full bg-surface px-3 py-1.5 text-sm font-semibold text-ink"
+                className="kq-chip inline-flex items-center gap-2 rounded-full bg-surface px-3 py-1.5 text-sm font-semibold text-ink transition-transform active:scale-95"
               >
                 <Avatar name={p.name} size="sm" />
                 {p.name}
@@ -355,9 +447,9 @@ function OpenCourt({
             ))}
             <button
               onClick={() => setSlot(null)}
-              className="rounded-full px-3 py-1.5 text-sm font-semibold text-muted"
+              className="kq-chip rounded-full px-3 py-1.5 text-sm font-semibold text-muted"
             >
-              Keep
+              Cancel
             </button>
           </div>
         </div>
@@ -366,8 +458,8 @@ function OpenCourt({
       {error && <p className="mt-3 text-sm font-medium text-danger">{error}</p>}
 
       <div className="mt-3 flex gap-2">
-        <Button icon={Play} full disabled={busy} onClick={() => void start()}>
-          {busy ? 'Starting…' : 'Start match'}
+        <Button icon={Play} full loading={busy} onClick={() => void start()}>
+          Start match
         </Button>
         <Button variant="secondary" icon={Shuffle} onClick={swapPartners} className="px-3">
           Swap
@@ -400,9 +492,13 @@ function TeamSlots({
           <button
             key={id}
             onClick={() => onPick(selected ? null : index)}
-            className={`flex w-full items-center gap-2 rounded-xl px-2 py-1.5 text-left ${selected ? 'bg-tint ring-2 ring-primary' : ''}`}
+            className={`flex w-full items-center gap-2 rounded-xl px-2 py-1.5 text-left transition-colors ${selected ? 'bg-tint ring-2 ring-primary' : 'hover:bg-tint/50'}`}
           >
-            <Avatar name={player?.name ?? '?'} size="sm" />
+            <Avatar
+              name={player?.name ?? '?'}
+              size="sm"
+              badge={player && <TierBadge tier={player.tier} />}
+            />
             <span className="min-w-0 flex-1 truncate text-sm font-semibold text-ink">
               {player?.name ?? 'Unknown'}
             </span>
@@ -419,13 +515,18 @@ function Queue({
   players,
   me,
   admin,
+  adding,
+  onToggleAdd,
   reload,
 }: {
   players: SessionPlayer[]
   me: Member | null
   admin: boolean
+  adding: boolean
+  onToggleAdd: () => void
   reload: () => void
 }) {
+  const [removed, setRemoved] = useState<{ id: string; name: string } | null>(null)
   const waiting = players.filter((p) => p.status === 'waiting')
   const resting = players.filter((p) => p.status === 'resting')
   const playing = players.filter((p) => p.status === 'playing')
@@ -440,12 +541,31 @@ function Queue({
     })),
   )
   const byId = new Map(waiting.map((p) => [p.id, p]))
+  const mine = players.find((p) => p.club_members.id === me?.id && p.status !== 'left')
 
   return (
     <>
-      <SectionHeading>
+      <SectionHeading
+        action={
+          admin && (
+            <Button
+              variant="secondary"
+              size="sm"
+              icon={UserPlus}
+              aria-expanded={adding}
+              onClick={onToggleAdd}
+            >
+              {adding ? 'Done' : 'Player'}
+            </Button>
+          )
+        }
+      >
         Queue{waiting.length > 0 && ` · ${waiting.length} waiting`}
       </SectionHeading>
+
+      {/* Own status and own actions in one place. Without this the only way to
+          sit out was to find yourself in a list of twenty. */}
+      {mine && <SelfStatus player={mine} position={order.findIndex((e) => e.memberId === mine.id) + 1} reload={reload} />}
 
       {waiting.length === 0 ? (
         <EmptyState
@@ -469,6 +589,7 @@ function Queue({
                 position={index + 1}
                 isMe={player.club_members.id === me?.id}
                 admin={admin}
+                onRemoved={setRemoved}
                 reload={reload}
               />
             )
@@ -486,14 +607,87 @@ function Queue({
                 player={player}
                 isMe={player.club_members.id === me?.id}
                 admin={admin}
+                onRemoved={setRemoved}
                 reload={reload}
               />
             ))}
           </Card>
         </>
       )}
+
+      {removed && (
+        <UndoBar
+          message={`${removed.name} removed`}
+          onDismiss={() => setRemoved(null)}
+          onAction={() => {
+            const { id } = removed
+            setRemoved(null)
+            void setPlayerStatus(id, 'waiting').then(reload)
+          }}
+        />
+      )}
     </>
   )
+}
+
+/** Where you are in the queue, and the only two things you can do about it. */
+function SelfStatus({
+  player,
+  position,
+  reload,
+}: {
+  player: SessionPlayer
+  position: number
+  reload: () => void
+}) {
+  const [busy, error, run] = useAction()
+  const move = (status: SessionPlayer['status']) =>
+    run(async () => {
+      await setPlayerStatus(player.id, status)
+      reload()
+    })
+
+  const waiting = player.status === 'waiting'
+
+  return (
+    <div className="mb-3 rounded-2xl bg-tint px-4 py-2.5">
+      <div className="flex flex-wrap items-center gap-x-3 gap-y-2">
+        <p className="min-w-0 flex-1 text-sm font-semibold text-primary">
+          {player.status === 'playing'
+            ? "You're on court"
+            : waiting
+              ? `You're ${ordinal(position)} in the queue`
+              : "You're sitting out"}
+        </p>
+        {waiting && (
+          <Button variant="ghost" size="sm" loading={busy} onClick={() => move('resting')}>
+            Sit out
+          </Button>
+        )}
+        {player.status === 'resting' && (
+          <>
+            <Button variant="primary" size="sm" loading={busy} onClick={() => move('waiting')}>
+              I'm back
+            </Button>
+            <ConfirmButton
+              variant="ghost"
+              size="sm"
+              label="Leave"
+              confirmLabel="Leave for the night?"
+              busy={busy}
+              onConfirm={() => move('left')}
+            />
+          </>
+        )}
+      </div>
+      {error && <p className="mt-1 text-xs font-medium text-danger">{error}</p>}
+    </div>
+  )
+}
+
+function ordinal(n: number): string {
+  const suffix = n % 100 >= 11 && n % 100 <= 13 ? 'th' : ['th', 'st', 'nd', 'rd'][n % 10] ?? 'th'
+  return `${n}${suffix}`
 }
 
 function PlayerRow({
@@ -501,71 +695,74 @@ function PlayerRow({
   position,
   isMe,
   admin,
+  onRemoved,
   reload,
 }: {
   player: SessionPlayer
   position?: number
   isMe: boolean
   admin: boolean
+  onRemoved: (removed: { id: string; name: string }) => void
   reload: () => void
 }) {
   const [busy, error, run] = useAction()
-
-  const move = (status: SessionPlayer['status']) =>
-    run(async () => {
-      await setPlayerStatus(player.id, status)
-      reload()
-    })
+  const name = player.club_members.display_name
 
   return (
     <div className="flex flex-wrap items-center gap-3 px-4 py-3">
       {position !== undefined && (
         <span className="tnum w-5 shrink-0 text-sm font-bold text-muted">{position}</span>
       )}
-      <Avatar name={player.club_members.display_name} />
+      <Avatar name={name} badge={<TierBadge tier={player.club_members.skill_tier} />} />
       <div className="min-w-0 flex-1">
         <p className="truncate font-semibold text-ink">
-          {player.club_members.display_name}
+          {name}
           {isMe && <span className="ml-1.5 text-sm font-medium text-muted">(you)</span>}
         </p>
         <p className="tnum mt-0.5 text-xs text-muted">
           {player.games_played} {player.games_played === 1 ? 'game' : 'games'} ·{' '}
-          {player.club_members.skill_tier}
+          {TIER_LABEL[player.club_members.skill_tier]}
         </p>
       </div>
 
       {/* A guest has no phone, so the host does everything for them. */}
       {isGuest(player.club_members) && <Pill tone="neutral">Guest</Pill>}
 
-      {isMe && player.status === 'waiting' && (
-        <Button variant="ghost" disabled={busy} className="px-3" onClick={() => move('resting')}>
-          Sit out
-        </Button>
-      )}
-      {isMe && player.status === 'resting' && (
-        <Button variant="secondary" disabled={busy} className="px-3" onClick={() => move('waiting')}>
-          I'm back
-        </Button>
-      )}
       {admin && !isMe && player.status !== 'left' && (
-        <Button
+        <ConfirmButton
           variant="ghost"
+          size="sm"
           icon={UserMinus}
-          disabled={busy}
-          className="px-3"
-          aria-label={`Remove ${player.club_members.display_name}`}
-          onClick={() => move('left')}
+          label=""
+          ariaLabel={`Remove ${name}`}
+          confirmLabel={`Remove ${name}?`}
+          busy={busy}
+          error={error}
+          className="px-2"
+          onConfirm={() =>
+            run(async () => {
+              await setPlayerStatus(player.id, 'left')
+              onRemoved({ id: player.id, name })
+              reload()
+            })
+          }
         />
       )}
-
-      {error && <p className="w-full text-sm font-medium text-danger">{error}</p>}
     </div>
   )
 }
 
 /* -------------------------------------------------------------- add players */
 
-function AddPlayer({ data, reload }: { data: LiveData; reload: () => void }) {
+function AddPlayer({
+  data,
+  reload,
+  onDone,
+}: {
+  data: LiveData
+  reload: () => void
+  onDone: () => void
+}) {
   const [busy, error, run] = useAction()
   const inSession = new Set(
     data.players.filter((p) => p.status !== 'left').map((p) => p.club_members.id),
@@ -573,52 +770,53 @@ function AddPlayer({ data, reload }: { data: LiveData; reload: () => void }) {
   const absent = data.clubMembers.filter((m) => !inSession.has(m.id))
 
   return (
-    <>
-      <SectionHeading>Add players</SectionHeading>
-      <Card>
-        {absent.length > 0 && (
-          <>
-            <p className="text-sm text-muted">
-              Club members who are here but haven't joined on their own phone.
-            </p>
-            <div className="mt-3 flex flex-wrap gap-2">
-              {absent.map((member) => (
-                <button
-                  key={member.id}
-                  disabled={busy}
-                  onClick={() =>
-                    run(async () => {
-                      await addPlayer(data.session.id, member.id)
-                      reload()
-                    })
-                  }
-                  className="inline-flex items-center gap-2 rounded-full bg-tint px-3 py-1.5 text-sm font-semibold text-primary"
-                >
-                  <Plus size={14} strokeWidth={2.5} aria-hidden />
-                  {member.display_name}
-                </button>
-              ))}
-            </div>
-            {error && <p className="mt-2 text-sm font-medium text-danger">{error}</p>}
-            <hr className="my-4 border-hairline" />
-          </>
-        )}
+    <Card className="kq-rise mt-3">
+      {absent.length > 0 && (
+        <>
+          <Eyebrow>Already in the club</Eyebrow>
+          <p className="mt-1 text-sm text-muted">
+            Here tonight, but haven't joined on their own phone.
+          </p>
+          <div className="mt-3 flex flex-wrap gap-2">
+            {absent.map((member) => (
+              <button
+                key={member.id}
+                disabled={busy}
+                onClick={() =>
+                  run(async () => {
+                    await addPlayer(data.session.id, member.id)
+                    reload()
+                  })
+                }
+                className="kq-chip inline-flex items-center gap-2 rounded-full bg-tint px-3 py-1.5 text-sm font-semibold text-primary transition-transform active:scale-95 disabled:opacity-40"
+              >
+                <Plus size={14} strokeWidth={2.5} aria-hidden />
+                {member.display_name}
+              </button>
+            ))}
+          </div>
+          {error && <p className="mt-2 text-sm font-medium text-danger">{error}</p>}
+          <hr className="my-4 border-hairline" />
+        </>
+      )}
 
-        <p className="text-sm font-semibold text-ink">Someone new, without a phone</p>
-        <p className="mt-0.5 mb-3 text-sm text-muted">
-          They queue and get scored like everyone else. They can take over this name
-          later with the join code.
-        </p>
-        <AddGuestForm
-          clubId={data.session.club_id}
-          submitLabel="Add to queue"
-          onAdded={async (guest) => {
-            await addPlayer(data.session.id, guest.id)
-            reload()
-          }}
-        />
-      </Card>
-    </>
+      <Eyebrow>Someone new, without a phone</Eyebrow>
+      <p className="mt-1 mb-3 text-sm text-muted">
+        They queue and get scored like everyone else. They can take over this name
+        later with the join code.
+      </p>
+      <AddGuestForm
+        clubId={data.session.club_id}
+        submitLabel="Add to queue"
+        onAdded={async (guest) => {
+          await addPlayer(data.session.id, guest.id)
+          reload()
+        }}
+      />
+      <Button variant="ghost" full className="mt-2" onClick={onDone}>
+        Done adding
+      </Button>
+    </Card>
   )
 }
 
@@ -644,8 +842,8 @@ function MatchTimer({ since }: { since: string }) {
   const ss = seconds % 60
 
   return (
-    <span className="tnum inline-flex items-center gap-1.5 text-sm font-semibold text-primary">
-      <Timer size={16} strokeWidth={2.25} aria-hidden />
+    <span className="tnum inline-flex items-center gap-1 rounded-full bg-tint px-2 py-0.5 text-xs font-bold text-primary">
+      <Timer size={12} strokeWidth={2.5} aria-hidden />
       {mm}:{String(ss).padStart(2, '0')}
     </span>
   )

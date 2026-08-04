@@ -4,6 +4,9 @@
  * deferred — when it lands, this stays as the fallback.
  */
 
+import type { ReactNode } from 'react'
+import { TIER_SHORT, type Tier } from '../lib/db'
+
 // Every swatch here carries white text at >= 4.5:1. Asserted in Avatar.test.ts.
 const SWATCHES = [
   '#1E7A6F', // teal
@@ -45,19 +48,50 @@ export function Avatar({
   name,
   size = 'md',
   ring,
+  badge,
 }: {
   name: string
   size?: keyof typeof SIZES
   /** Draws a page-coloured ring, for avatars overlapping other elements. */
   ring?: boolean
+  /** Overlaps the bottom-right — a TierBadge on the queue and the court. */
+  badge?: ReactNode
 }) {
-  return (
+  const circle = (
     <span
       className={`inline-flex shrink-0 items-center justify-center rounded-full font-semibold text-white ${SIZES[size]} ${ring ? 'ring-2 ring-page' : ''}`}
       style={{ backgroundColor: avatarColor(name) }}
       aria-hidden
     >
       {initials(name)}
+    </span>
+  )
+
+  if (!badge) return circle
+
+  return (
+    <span className="relative inline-flex shrink-0">
+      {circle}
+      <span className="absolute -right-1 -bottom-1">{badge}</span>
+    </span>
+  )
+}
+
+/**
+ * The skill tier as three characters, sized to overlap an avatar. Kept short
+ * deliberately: on a queue row the name is what people read, and a full
+ * "Intermediate" pill next to every avatar is noise.
+ *
+ * aria-hidden because the tier is always written out in the row's text — this
+ * is a second rendering of it, not a second fact.
+ */
+export function TierBadge({ tier }: { tier: Tier }) {
+  return (
+    <span
+      aria-hidden
+      className="rounded-full bg-surface-darker px-1.5 py-px text-[9px] font-bold tracking-wide text-accent ring-2 ring-surface"
+    >
+      {TIER_SHORT[tier]}
     </span>
   )
 }

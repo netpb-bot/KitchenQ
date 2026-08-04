@@ -26,9 +26,9 @@
   --color-tint: #edf7d4;
 
   /* ---- podium ----
-     Medal colours are their own thing: they mean first/second/third, not
-     brand. All three carry ink text, never white. */
-  --color-gold: #f0b429;
+     Second and third place. Gold is `warn-fill` — that amber is already in the
+     palette and a second near-identical yellow would be a token for nothing.
+     All three carry ink text, never white. */
   --color-silver: #c3ccbb;
   --color-bronze: #cd7f32;
 
@@ -85,22 +85,124 @@ body {
   -webkit-text-size-adjust: 100%;
 }
 
+/* On anything wider than a phone the app is a centred column; the body colour
+   becomes the backdrop it sits on. Matches the md: breakpoint the column and
+   the tab bar use. */
+@media (min-width: 48rem) {
+  body {
+    background: var(--color-surface-sunk);
+  }
+}
+
 /* Scores, standings and the fee list must align in columns. */
 .tnum {
   font-variant-numeric: tabular-nums;
 }
 
-/* Used one-handed, standing, on a court. */
+/* Used one-handed, standing, on a court.
+   These rules are unlayered, so they beat every Tailwind utility — a layered
+   `h-6` cannot override an unlayered `min-height`. Checkboxes and radios are
+   excluded because they are sized boxes, not targets: without this exclusion a
+   24px checkbox renders 24 wide and 44 tall. Wrap them in a tall label to get
+   the target back (see PlayerScoringToggle). */
 button,
 a[role='button'],
 select,
-input {
+input:not([type='checkbox']):not([type='radio']) {
   min-height: 44px;
+}
+
+/* Opt-out for chip-sized controls, which are always secondary to a full-size
+   action next to them. Unlayered so it can win against the rule above. */
+.kq-chip {
+  min-height: 2rem;
 }
 
 :focus-visible {
   outline: 2px solid var(--color-primary);
   outline-offset: 2px;
+}
+
+/* ------------------------------------------------------------------ motion
+   Hand-written because the whole set is 40 lines and an animation library is
+   35KB. Everything here is entrance or acknowledgement — nothing loops except
+   the live dot, and the reduced-motion block at the bottom kills all of it. */
+
+@keyframes kq-rise {
+  from {
+    opacity: 0;
+    transform: translateY(8px);
+  }
+}
+
+@keyframes kq-pulse {
+  50% {
+    opacity: 0.35;
+    transform: scale(0.82);
+  }
+}
+
+@keyframes kq-pop {
+  from {
+    transform: scale(0.9);
+  }
+  60% {
+    transform: scale(1.04);
+  }
+}
+
+@keyframes kq-grow {
+  from {
+    transform: scaleY(0);
+  }
+}
+
+@keyframes kq-slide-up {
+  from {
+    opacity: 0;
+    transform: translateY(16px);
+  }
+}
+
+.kq-rise {
+  animation: kq-rise 0.34s ease-out both;
+}
+.kq-pulse {
+  animation: kq-pulse 1.6s ease-in-out infinite;
+}
+.kq-pop {
+  animation: kq-pop 0.32s var(--ease-spring) both;
+}
+.kq-grow {
+  transform-origin: bottom;
+  animation: kq-grow 0.5s var(--ease-spring) both;
+}
+.kq-slide-up {
+  animation: kq-slide-up 0.28s var(--ease-spring) both;
+}
+
+/* Entrance stagger. Capped at 6 — past that the last card arrives late enough
+   to read as lag rather than choreography. */
+.kq-stagger > * {
+  animation: kq-rise 0.34s ease-out both;
+}
+.kq-stagger > *:nth-child(1) {
+  animation-delay: 0.03s;
+}
+.kq-stagger > *:nth-child(2) {
+  animation-delay: 0.06s;
+}
+.kq-stagger > *:nth-child(3) {
+  animation-delay: 0.09s;
+}
+.kq-stagger > *:nth-child(4) {
+  animation-delay: 0.12s;
+}
+.kq-stagger > *:nth-child(5) {
+  animation-delay: 0.15s;
+}
+.kq-stagger > *:nth-child(n + 6) {
+  animation-delay: 0.18s;
 }
 
 @media (prefers-reduced-motion: reduce) {
