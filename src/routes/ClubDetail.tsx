@@ -24,6 +24,7 @@ import {
   listSessions,
   money,
   myMember,
+  nameTaken,
   updateMember,
   useAsync,
   type LedgerEntry,
@@ -412,6 +413,7 @@ function MembersTab({
               member={m}
               isMe={m.id === me?.id}
               canEdit={admin && m.role !== 'owner'}
+              taken={members}
               onChanged={reload}
             />
           ))}
@@ -426,7 +428,14 @@ function MembersTab({
               For a regular who never brings a phone. They keep a record across
               sessions, and can take the name over themselves later with a join code.
             </p>
-            <AddGuestForm clubId={clubId} onAdded={reload} submitLabel="Add guest" />
+            {/* `members`, not `shown` — a name typed in the search box above
+                must not narrow what counts as already taken. */}
+            <AddGuestForm
+              clubId={clubId}
+              taken={members}
+              onAdded={reload}
+              submitLabel="Add guest"
+            />
           </Card>
         </>
       )}
@@ -446,11 +455,14 @@ function MemberRow({
   member,
   isMe,
   canEdit,
+  taken,
   onChanged,
 }: {
   member: Member
   isMe: boolean
   canEdit: boolean
+  /** The whole roster, so a rename cannot land on a name someone else holds. */
+  taken: Member[]
   onChanged: () => void
 }) {
   const [busy, setBusy] = useState(false)
@@ -458,6 +470,7 @@ function MemberRow({
   const [editing, setEditing] = useState(false)
   const [name, setName] = useState(member.display_name)
   const guest = isGuest(member)
+  const clash = nameTaken(taken.map((m) => m.display_name), name, member.display_name)
 
   async function patch(change: { role?: Role; skill_tier?: Tier; display_name?: string }) {
     setBusy(true)
@@ -520,17 +533,23 @@ function MemberRow({
                   maxLength={40}
                   autoFocus
                   aria-label={`Rename ${member.display_name}`}
+                  aria-invalid={clash || undefined}
                   className="flex-1"
                 />
                 <Button
                   icon={Check}
                   loading={busy}
-                  disabled={!name.trim() || name.trim() === member.display_name}
+                  disabled={!name.trim() || name.trim() === member.display_name || clash}
                   className="shrink-0 px-3"
                   aria-label="Save name"
                   onClick={() => void patch({ display_name: name.trim() })}
                 />
               </div>
+              {clash && (
+                <p className="mt-1.5 text-meta font-medium text-danger" role="alert">
+                  Someone in this club already uses that name.
+                </p>
+              )}
             </Field>
           )}
 

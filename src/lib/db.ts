@@ -82,9 +82,43 @@ export type LedgerEntry = {
 }
 
 /** Unwrap a PostgREST response, turning its error into a throw. */
-function ok<T>(res: { data: unknown; error: { message: string } | null }): T {
-  if (res.error) throw new Error(res.error.message)
+function ok<T>(res: { data: unknown; error: { message: string; code?: string } | null }): T {
+  if (res.error) {
+    // Every mutation and every rpc lands here, so mapping the club_members unique
+    // violation once covers adding a guest, joining by code and both rename
+    // screens — including any write path added later.
+    //
+    // Matched on the table rather than the index name so that renaming the index
+    // cannot silently drop this back to raw Postgres text. The only other unique
+    // constraint on club_members is (club_id, user_id), and join_session and
+    // claim_member both check for that themselves before inserting, so it cannot
+    // reach here to be mislabelled.
+    if (res.error.code === '23505' && /club_members/.test(res.error.message)) {
+      throw new Error('Someone in this club already uses that name — try adding a last initial.')
+    }
+    throw new Error(res.error.message)
+  }
   return res.data as T
+}
+
+/**
+ * Names are compared the way club_members_unique_name compares them: trimmed,
+ * runs of whitespace collapsed, case folded. Two people called Mike need telling
+ * apart on a court diagram that only ever renders a first name.
+ *
+ * ponytail: JS `\s` and `toLowerCase()` are not byte-identical to Postgres's
+ * `\s` and `lower()` (Turkish dotted I, say). The database is the authority; a
+ * disagreement can only ever produce a spurious block, never a duplicate.
+ */
+export function normalizeName(name: string): string {
+  return name.trim().replace(/\s+/g, ' ').toLowerCase()
+}
+
+/** Is `candidate` already used? `excludeSelf` lets a rename keep its own name. */
+export function nameTaken(existing: string[], candidate: string, excludeSelf = ''): boolean {
+  const wanted = normalizeName(candidate)
+  if (!wanted || wanted === normalizeName(excludeSelf)) return false
+  return existing.some((name) => normalizeName(name) === wanted)
 }
 
 /* --------------------------------------------------------------------- auth */
@@ -217,20 +251,6 @@ export async function createGuest(
       .insert({ club_id: clubId, display_name: name.trim(), skill_tier: tier })
       .select(MEMBER_COLS)
       .single(),
-  )
-}
-
-/** Guests nobody has taken over yet — the candidates on the join screen. */
-export async function listUnclaimedGuests(clubId: string): Promise<Member[]> {
-  await ensureSession()
-  return ok(
-    await supabase
-      .from('club_members')
-      .select(MEMBER_COLS)
-      .eq('club_id', clubId)
-      .eq('role', 'member')
-      .is('user_id', null)
-      .order('display_name'),
   )
 }
 

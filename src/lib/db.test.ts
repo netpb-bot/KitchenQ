@@ -1,5 +1,12 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { debounce, randomCode, unsettled, type LedgerEntry } from './db'
+import {
+  debounce,
+  nameTaken,
+  normalizeName,
+  randomCode,
+  unsettled,
+  type LedgerEntry,
+} from './db'
 
 describe('randomCode', () => {
   const codes = Array.from({ length: 500 }, randomCode)
@@ -56,6 +63,55 @@ describe('unsettled', () => {
 
   it('is empty once everyone is square', () => {
     expect(unsettled([entry('c', 100, 100), entry('d', 0, 0)])).toEqual([])
+  })
+})
+
+// These two are the client half of club_members_unique_name. The index is what
+// actually prevents a duplicate; what is being checked here is that the forms
+// agree with it, so a host is told before they submit rather than after.
+describe('normalizeName', () => {
+  it('trims, collapses runs of whitespace and folds case', () => {
+    expect(normalizeName('  Mike  ')).toBe('mike')
+    expect(normalizeName('Jo  Ann')).toBe('jo ann')
+    expect(normalizeName('Jo\tAnn')).toBe('jo ann')
+  })
+
+  // The trigger translates nbsp to a space before its own \s pass, because
+  // Postgres's \s does not match it and this one does. Same result either way.
+  it('treats a non-breaking space as a space', () => {
+    expect(normalizeName(`Jo${String.fromCharCode(160)}Ann`)).toBe('jo ann')
+  })
+})
+
+describe('nameTaken', () => {
+  const roster = ['Mike', 'Jo Ann', 'Priya']
+
+  it('catches the same name in a different case or with padding', () => {
+    expect(nameTaken(roster, 'mike')).toBe(true)
+    expect(nameTaken(roster, ' Mike ')).toBe(true)
+    expect(nameTaken(roster, 'MIKE')).toBe(true)
+    expect(nameTaken(roster, 'Jo  Ann')).toBe(true)
+  })
+
+  it('leaves genuinely different names alone', () => {
+    expect(nameTaken(roster, 'Mike R')).toBe(false)
+    expect(nameTaken(roster, 'Michael')).toBe(false)
+    expect(nameTaken(roster, 'Joann')).toBe(false)
+  })
+
+  // An empty field is the starting state of every one of these forms; flagging
+  // it would put a red line under a name nobody has typed yet.
+  it('never flags an empty name', () => {
+    expect(nameTaken(roster, '')).toBe(false)
+    expect(nameTaken(roster, '   ')).toBe(false)
+  })
+
+  // Renaming Mike to "Mike" is a no-op, not a collision with himself. Fixing the
+  // capitalisation of your own name has to stay possible.
+  it('excludes the name being renamed', () => {
+    expect(nameTaken(roster, 'Mike', 'Mike')).toBe(false)
+    expect(nameTaken(roster, 'mike', 'Mike')).toBe(false)
+    expect(nameTaken(roster, 'Jo Ann', 'Mike')).toBe(true)
   })
 })
 
