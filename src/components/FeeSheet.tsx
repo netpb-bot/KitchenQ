@@ -186,25 +186,33 @@ function FeeRow({
             {name}
             {isMe && <span className="ml-1.5 text-sm font-medium text-muted">(you)</span>}
           </p>
-          <p className="tnum mt-0.5 text-xs text-muted">
-            {entry.status === 'paid'
-              ? `Paid ${money(entry.amount_paid, currency)}`
-              : entry.status === 'partial'
-                ? `${money(entry.amount_paid, currency)} of ${money(entry.amount_due, currency)}`
-                : `Owes ${money(entry.amount_due, currency)}`}
-          </p>
+          {/* Pill sits on the amount line, not as its own flex child — beside the
+              buttons it starved the name column and the amount overflowed. */}
+          <div className="mt-0.5 flex items-center gap-2">
+            <p className="tnum truncate text-xs text-muted">
+              {entry.status === 'paid'
+                ? `Paid ${money(entry.amount_paid, currency)}`
+                : entry.status === 'partial'
+                  ? `${money(entry.amount_paid, currency)} of ${money(entry.amount_due, currency)}`
+                  : `Owes ${money(entry.amount_due, currency)}`}
+            </p>
+            {entry.status === 'paid' ? (
+              <Pill tone="neutral" className="shrink-0">
+                Paid
+              </Pill>
+            ) : (
+              <Pill
+                tone={entry.status === 'partial' ? 'warn' : 'danger'}
+                className="shrink-0"
+              >
+                {entry.status === 'partial' ? 'Partial' : 'Unpaid'}
+              </Pill>
+            )}
+          </div>
         </div>
 
-        {entry.status === 'paid' ? (
-          <Pill tone="neutral">Paid</Pill>
-        ) : (
-          <Pill tone={entry.status === 'partial' ? 'warn' : 'danger'}>
-            {entry.status === 'partial' ? 'Partial' : 'Unpaid'}
-          </Pill>
-        )}
-
         {admin && !editing && (
-          <div className="flex items-center gap-1">
+          <div className="flex shrink-0 items-center gap-1">
             {entry.status === 'paid' ? (
               // Confirmed: this wipes a recorded payment and sits one finger-width
               // from "Mark paid".
