@@ -1,3 +1,4 @@
+import { useEffect, useRef, useState, type RefObject } from 'react'
 import { Link } from 'react-router-dom'
 import {
   CalendarDays,
@@ -99,17 +100,31 @@ export function Home() {
   const liveNow = d?.sessions.find((s) => s.status === 'live') ?? null
   const tonight = (d?.sessions ?? []).filter((s) => s.id !== liveNow?.id)
 
+  // Once the live card leaves the top of the screen it comes back as a strip.
+  const liveCard = useRef<HTMLAnchorElement>(null)
+  const pastLiveCard = useScrolledPast(liveCard, Boolean(liveNow))
+
   return (
     <Screen
       title={d?.me ? 'Ready for your next match?' : 'Welcome to KitchenQ'}
       subtitle={d?.me ? undefined : 'Queue · Rankings · Fees'}
+      // A greeting and a question are worth reading once, not worth a third of
+      // the viewport for the whole scroll. Only the live session pins here, and
+      // only once you have scrolled past its card.
+      sticky={false}
+      // -mb-4 pulls the greeting down onto the title: Screen's title row owns a
+      // pt-5 that otherwise leaves the two reading as separate blocks.
       lead={
-        <>
-          {liveNow && <LiveNowBar session={liveNow} />}
-          {greeting && <p className="pt-4 text-meta font-medium text-muted">{greeting}</p>}
-        </>
+        greeting && <p className="-mb-4 pt-5 text-meta font-medium text-muted">{greeting}</p>
       }
     >
+      {liveNow && pastLiveCard && <LiveNowStrip session={liveNow} />}
+
+      {/* First thing in the body, not in the header: the header is greeting +
+          title, and a black card wedged above the greeting made the screen open
+          on its loudest element with the salutation as its caption. */}
+      {liveNow && <LiveNowCard ref={liveCard} session={liveNow} />}
+
       {/* An unreachable server has its own plain-language banner; repeating it
           as "TypeError: Failed to fetch" tells the player nothing they can act
           on. Anything else is a real error and is shown as one. */}
@@ -152,8 +167,15 @@ export function Home() {
       <div className="space-y-3">
         <ActionCard
           // Straight to the club when there is only one — the list would be a
-          // single row standing between the host and the New button.
-          to={d?.clubs.length === 1 ? `/clubs/${d.clubs[0].id}` : '/clubs'}
+          // single row standing between the host and the New button. With none,
+          // straight into the create form: this card already promises it.
+          to={
+            d?.clubs.length === 1
+              ? `/clubs/${d.clubs[0].id}`
+              : d?.clubs.length === 0
+                ? '/clubs?new=1'
+                : '/clubs'
+          }
           icon={Plus}
           title="Host a session"
           // The single-club path lands on the club, where the session form is.
@@ -166,7 +188,9 @@ export function Home() {
                 ? 'Create a club first — it takes one field.'
                 : 'Pick which club is playing tonight.'
           }
-          dark
+          // Only one black card on screen at a time — while a session is live
+          // that card is the live one, and two of them shouting cancel out.
+          dark={!liveNow}
         />
         <ActionCard
           to="/join"
@@ -205,31 +229,98 @@ export function Home() {
 }
 
 /**
- * Pinned above everything else while a session is running: one tap back into
- * the night in progress. It used to be a row in the Tonight list, which meant
- * the app's most urgent state looked exactly like its least urgent.
+ * The first thing in the body while a session is running: one tap back into the
+ * night in progress. It used to be a row in the Tonight list, which meant the
+ * app's most urgent state looked exactly like its least urgent.
+ *
+ * "LIVE NOW" is its own line rather than the head of a run-on uppercase meta
+ * line — the status is the label, the courts and clock are the detail.
  *
  * ponytail: elapsed time is rendered once on mount, not ticked. Home remounts
  * on every navigation back to it, and this is ambient context, not a stopwatch
  * — the running one lives on the court card where a match is actually timed.
  */
-function LiveNowBar({ session }: { session: Session }) {
+function LiveNowCard({
+  session,
+  ref,
+}: {
+  session: Session
+  ref?: RefObject<HTMLAnchorElement | null>
+}) {
+  return (
+    <Link ref={ref} to={`/session/${session.id}`} className="mt-5 block">
+      <DarkCard watermark={Swords} className="transition-transform active:scale-[0.99]">
+        <div className="flex items-center gap-4">
+          <div className="min-w-0 flex-1">
+            <p className="flex items-center gap-2 text-caption font-semibold uppercase text-brand">
+              <span className="kq-pulse h-2 w-2 shrink-0 rounded-full bg-brand" aria-hidden />
+              Live now
+            </p>
+            <p className="mt-1.5 truncate text-title font-semibold text-white">{session.name}</p>
+            <p className="tnum mt-0.5 truncate text-meta text-white/60">
+              {session.court_count} {session.court_count === 1 ? 'court' : 'courts'}
+              {session.started_at && ` · ${duration(session)} in`}
+            </p>
+          </div>
+          <span className="flex h-11 w-11 shrink-0 items-center justify-center rounded-full bg-fill-on-dark text-white">
+            <ChevronRight size={19} strokeWidth={2} aria-hidden />
+          </span>
+        </div>
+      </DarkCard>
+    </Link>
+  )
+}
+
+/**
+ * The live card, compressed to a bar, once the real one has scrolled off the
+ * top. Nothing else on Home is worth pinning — the header scrolls away with the
+ * content — so this appears against page content rather than under a chrome bar
+ * and carries its own dark surface to say it is not part of the list below.
+ */
+function LiveNowStrip({ session }: { session: Session }) {
   return (
     <Link
       to={`/session/${session.id}`}
-      className="mt-3 flex items-center gap-3 rounded-card bg-surface-dark px-4 py-3 text-white shadow-pop transition-transform active:scale-[0.99]"
+      // Fixed, so it must re-do the shell's centred column itself — the same
+      // inset-x-0 + mx-auto + max-w trio UndoBar uses at the other end.
+      className="kq-rise fixed inset-x-0 top-0 z-30 mx-auto w-full max-w-[30rem] bg-surface-dark pt-[env(safe-area-inset-top)] text-white shadow-pop"
     >
-      <span className="kq-pulse h-2 w-2 shrink-0 rounded-full bg-brand" aria-hidden />
-      <span className="min-w-0 flex-1">
-        <span className="block truncate text-body font-medium">{session.name}</span>
-        <span className="tnum mt-0.5 block truncate text-caption uppercase text-white/55">
-          Live · {session.court_count} {session.court_count === 1 ? 'court' : 'courts'}
-          {session.started_at && ` · ${duration(session)}`}
-        </span>
+      <span className="flex items-center gap-2.5 px-5 py-3">
+        <span className="kq-pulse h-2 w-2 shrink-0 rounded-full bg-brand" aria-hidden />
+        <span className="min-w-0 flex-1 truncate text-meta font-medium">{session.name}</span>
+        {session.started_at && (
+          <span className="tnum shrink-0 text-caption text-white/60">{duration(session)}</span>
+        )}
+        <ChevronRight size={17} className="shrink-0 text-white/55" aria-hidden />
       </span>
-      <ChevronRight size={18} className="shrink-0 text-white/55" aria-hidden />
     </Link>
   )
+}
+
+/**
+ * True once `ref`'s element has scrolled off the top of the viewport. An
+ * observer rather than a scroll handler: no listener firing on every frame of
+ * every scroll to compute something that changes twice.
+ *
+ * `enabled` is what re-runs this when the async data lands — the observed card
+ * does not exist on the first render, so the ref is still null then.
+ */
+function useScrolledPast(ref: RefObject<HTMLElement | null>, enabled: boolean): boolean {
+  const [past, setPast] = useState(false)
+
+  useEffect(() => {
+    const el = ref.current
+    if (!enabled || !el) {
+      setPast(false)
+      return
+    }
+    // The card sits at the top of the body, so the only way out of view is up.
+    const io = new IntersectionObserver(([entry]) => setPast(!entry.isIntersecting))
+    io.observe(el)
+    return () => io.disconnect()
+  }, [ref, enabled])
+
+  return past
 }
 
 /** Name, tier and the record — the answer to "what have I actually done?". */

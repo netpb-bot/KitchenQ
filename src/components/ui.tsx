@@ -17,6 +17,7 @@ export function Screen({
   action,
   lead,
   tabs,
+  sticky = true,
   children,
 }: {
   title: string
@@ -26,14 +27,26 @@ export function Screen({
   lead?: ReactNode
   /** Rendered below the title, inside the header, so it stays pinned on scroll. */
   tabs?: ReactNode
+  /**
+   * Pin the header on scroll. On by default: most screens keep a back link, a
+   * header action or tabs up there. Off for a screen whose header is only a
+   * title — pinning a sentence costs a third of a phone viewport and pins
+   * nothing anyone can act on.
+   */
+  sticky?: boolean
   children: ReactNode
 }) {
   return (
     <div className="mx-auto min-h-svh w-full max-w-[30rem] bg-page pb-[calc(var(--tabbar-h)+4.5rem)] md:shadow-lift">
       {/* Opaque first, translucent only where backdrop-filter actually works.
           Without the fallback the 90% page colour lets headings scroll through
-          the header as sliced glyphs on every engine that lacks the filter. */}
-      <header className="sticky top-0 z-10 bg-page px-5 pt-[env(safe-area-inset-top)] backdrop-blur-xl supports-[backdrop-filter]:bg-page/90">
+          the header as sliced glyphs on every engine that lacks the filter.
+          Both are dead weight when the header scrolls away with the content. */}
+      <header
+        className={`bg-page px-5 pt-[env(safe-area-inset-top)] ${
+          sticky ? 'sticky top-0 z-10 backdrop-blur-xl supports-[backdrop-filter]:bg-page/90' : ''
+        }`}
+      >
         {lead}
         <div className={`flex items-end justify-between gap-3 pt-5 ${tabs ? 'pb-3' : 'pb-4'}`}>
           <div className="min-w-0">
