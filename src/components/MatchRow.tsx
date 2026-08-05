@@ -21,7 +21,7 @@ export function MatchResult({
   return (
     <div className="grid grid-cols-[1fr_auto_1fr] items-center gap-3">
       <TeamLine ids={teamA} names={names} won={scoreA > scoreB} />
-      <p className="tnum text-lg font-bold text-ink">
+      <p className="tnum text-title font-semibold text-ink">
         {scoreA}–{scoreB}
       </p>
       <TeamLine ids={teamB} names={names} won={scoreB > scoreA} align="right" />
@@ -48,7 +48,7 @@ export function TeamLine({
         ))}
       </div>
       <p
-        className={`mt-1 truncate text-xs ${won ? 'font-bold text-primary' : 'font-medium text-muted'}`}
+        className={`mt-1 truncate text-meta ${won ? 'font-semibold text-primary' : 'text-muted'}`}
       >
         {ids.map((id) => firstName(names.get(id) ?? 'Unknown')).join(' & ')}
       </p>

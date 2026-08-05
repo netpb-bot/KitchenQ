@@ -83,7 +83,14 @@ export function Join() {
               required
               // Pops once the sixth character lands, so a code typed while
               // walking in gets an acknowledgement without a status line.
-              className={`tnum text-center text-2xl font-bold tracking-[0.3em] ${
+              //
+              // The placeholder drops the weight and the letter-spacing. At
+              // display size, centred, semibold and tracked out, "ABC123" was
+              // indistinguishable from a code someone had actually typed — so
+              // the disabled Join button looked broken rather than waiting.
+              // Contrast stays where it was; the visible label carries the
+              // meaning either way.
+              className={`tnum text-center text-display font-semibold tracking-[0.28em] placeholder:font-normal placeholder:tracking-normal ${
                 complete ? 'kq-pop border-primary bg-tint' : ''
               }`}
             />
@@ -92,12 +99,12 @@ export function Join() {
           {/* Worth saying out loud: silently showing nothing here is how a
               returning player ends up as a second member with an empty record. */}
           {complete && guests.loading && (
-            <p className="text-sm text-muted" role="status">
+            <p className="text-meta text-muted" role="status">
               Checking this club for your name…
             </p>
           )}
           {guests.error && (
-            <p className="text-sm font-medium text-warn" role="alert">
+            <p className="text-meta font-medium text-danger" role="alert">
               Couldn't check whether the host already has you on the roster. Joining
               with your name below still works — tell the host so they can merge you.
             </p>
@@ -105,8 +112,8 @@ export function Join() {
 
           {candidates.length > 0 && (
             <div className="rounded-xl bg-tint p-3">
-              <p className="text-sm font-semibold text-ink">Already play here?</p>
-              <p className="mt-0.5 text-xs text-muted">
+              <p className="text-body font-medium text-ink">Already play here?</p>
+              <p className="mt-0.5 text-meta text-muted">
                 Tap your name to take over the record the host has been keeping for you.
               </p>
               <div className="mt-2 flex flex-wrap gap-2">
@@ -116,7 +123,7 @@ export function Join() {
                     type="button"
                     disabled={busy}
                     onClick={() => claim(guest)}
-                    className="kq-chip inline-flex items-center gap-2 rounded-full bg-surface px-3 py-1.5 text-sm font-semibold text-ink transition-transform active:scale-95 disabled:opacity-40"
+                    className="kq-chip inline-flex items-center gap-2 rounded-full bg-surface px-3 py-1.5 text-meta font-medium text-ink transition-transform active:scale-95 disabled:opacity-40"
                   >
                     <Avatar name={guest.display_name} size="sm" />
                     {guest.display_name}
@@ -143,13 +150,13 @@ export function Join() {
           {name.trim() && (
             <div className="kq-rise flex items-center gap-3 rounded-xl bg-tint px-3 py-2.5">
               <Avatar name={name.trim()} />
-              <p className="text-sm text-ink">
+              <p className="text-meta text-ink">
                 Joining as <span className="font-semibold">{name.trim()}</span>
               </p>
             </div>
           )}
 
-          {error && <p className="text-sm font-medium text-danger">{error}</p>}
+          {error && <p className="text-meta font-medium text-danger">{error}</p>}
 
           <Button type="submit" full loading={busy} disabled={!complete || !name.trim()}>
             Join session

@@ -26,13 +26,13 @@ import {
   myMember,
   updateMember,
   useAsync,
-  type Club,
   type LedgerEntry,
   type Member,
   type Role,
+  type Session,
   type Tier,
 } from '../lib/db'
-import { standings } from '../lib/standings'
+import { standings, type Standing } from '../lib/standings'
 import { AddGuestForm } from '../components/AddGuestForm'
 import { Avatar } from '../components/Avatar'
 import { RankingNote, StandingsList } from '../components/StandingsList'
@@ -46,9 +46,21 @@ import {
   Loading,
   Pill,
   Screen,
+  SearchField,
   SectionHeading,
   Select,
+  ShowAllRow,
+  Tabs,
+  useShowAll,
 } from '../components/ui'
+
+/**
+ * Sessions, Standings, Dues and Members were four lists stacked on one page —
+ * three of them the same twenty-eight names, five thousand pixels of scroll on a
+ * normal club. They are tabs now: one list on screen, and the strip rides the
+ * sticky header so switching never means scrolling back up.
+ */
+type Tab = 'sessions' | 'standings' | 'dues' | 'members'
 
 export function ClubDetail() {
   const { clubId } = useParams<{ clubId: string }>()
@@ -66,7 +78,9 @@ export function ClubDetail() {
     ])
     return { club, me, members, sessions, ledger, matches }
   }, [id])
-  const [creating, setCreating] = useState(false)
+  // Tab state is local, not a search param: Back should leave the club, which is
+  // where it came from, rather than rewind through four tabs first.
+  const [tab, setTab] = useState<Tab>('sessions')
 
   if (view.loading) return <Screen title="Club"><Loading /></Screen>
   if (view.error)
@@ -82,6 +96,21 @@ export function ClubDetail() {
     members.map((m) => ({ memberId: m.id, name: m.display_name })),
     matches,
   )
+  const dues = duesRows(ledger, new Map(members.map((m) => [m.id, m.display_name])))
+
+  const tabs = [
+    { value: 'sessions' as const, label: 'Sessions', count: sessions.length },
+    { value: 'standings' as const, label: 'Standings' },
+    // Only worth a tab once there is money on the books. The count is the number
+    // of people who owe, which is the number a host acts on.
+    ...(ledger.length > 0
+      ? [{ value: 'dues' as const, label: admin ? 'Dues' : 'Balance', count: dues.length }]
+      : []),
+    { value: 'members' as const, label: 'Members', count: members.length },
+  ]
+  // A tab can leave the strip under you — the last fee gets voided and Dues is
+  // gone. Falling back beats a tablist with nothing selected.
+  const active = tabs.some((t) => t.value === tab) ? tab : 'sessions'
 
   return (
     <Screen
@@ -90,29 +119,61 @@ export function ClubDetail() {
       lead={
         <Link
           to="/clubs"
-          className="-ml-1 inline-flex min-h-11 items-center gap-1 pt-3 text-sm font-semibold text-muted"
+          className="-ml-1 inline-flex min-h-11 items-center gap-1 pt-3 text-meta font-medium text-muted"
         >
           <ChevronLeft size={18} aria-hidden />
           Clubs
         </Link>
       }
+      tabs={<Tabs label="Club sections" value={active} onChange={setTab} options={tabs} />}
     >
-      <SectionHeading
-        action={
-          admin && !creating ? (
-            <Button variant="secondary" size="sm" icon={Plus} onClick={() => setCreating(true)}>
-              New
-            </Button>
-          ) : undefined
-        }
-      >
-        Sessions
-      </SectionHeading>
+      {active === 'sessions' && (
+        <SessionsTab clubId={id} sessions={sessions} admin={admin} reload={reload} />
+      )}
+      {active === 'standings' && (
+        <StandingsTab table={table} matchCount={matches.length} meId={me?.id} />
+      )}
+      {active === 'dues' && <DuesTab rows={dues} currency={club.currency} admin={admin} />}
+      {active === 'members' && (
+        <MembersTab clubId={id} members={members} me={me} admin={admin} reload={reload} />
+      )}
+    </Screen>
+  )
+}
+
+/* --------------------------------------------------------------------- tabs */
+
+function SessionsTab({
+  clubId,
+  sessions,
+  admin,
+  reload,
+}: {
+  clubId: string
+  sessions: Session[]
+  admin: boolean
+  reload: () => void
+}) {
+  const [creating, setCreating] = useState(false)
+  const [shown, showAll] = useShowAll(sessions, 8)
+
+  return (
+    <>
+      {/* No "Sessions" heading: the tab you just tapped already says so, and a
+          duplicate h2 is seventy pixels off the top of every tab on the one
+          screen whose problem is height. Same reasoning in the other three. */}
+      {admin && !creating && (
+        <div className="mb-3 flex justify-end">
+          <Button variant="secondary" size="sm" icon={Plus} onClick={() => setCreating(true)}>
+            New session
+          </Button>
+        </div>
+      )}
 
       {creating && (
         <div className="mb-3">
           <CreateSessionForm
-            clubId={id}
+            clubId={clubId}
             onCancel={() => setCreating(false)}
             onCreated={() => {
               setCreating(false)
@@ -133,15 +194,15 @@ export function ClubDetail() {
         />
       ) : (
         <div className="kq-stagger space-y-3">
-          {sessions.map((s) => (
+          {shown.map((s) => (
             <Link key={s.id} to={`/session/${s.id}`} className="block">
               <Card
                 interactive
-                className={`flex items-center gap-3 ${s.status === 'live' ? 'ring-1 ring-brand/40' : ''}`}
+                className="flex items-center gap-3"
               >
                 <div className="min-w-0 flex-1">
-                  <p className="truncate font-semibold text-ink">{s.name}</p>
-                  <p className="tnum mt-0.5 text-sm text-muted">
+                  <p className="truncate text-body font-medium text-ink">{s.name}</p>
+                  <p className="tnum mt-0.5 text-meta text-muted">
                     {s.court_count} {s.court_count === 1 ? 'court' : 'courts'} · code{' '}
                     {s.join_code}
                   </p>
@@ -155,40 +216,197 @@ export function ClubDetail() {
                     {s.status === 'draft' ? 'Not started' : 'Ended'}
                   </Pill>
                 )}
-                <ChevronRight size={20} className="text-muted" aria-hidden />
+                <ChevronRight size={18} className="text-muted" aria-hidden />
               </Card>
             </Link>
           ))}
+          {showAll && (
+            <Card className="p-0">
+              <ShowAllRow count={sessions.length} noun="sessions" onClick={showAll} />
+            </Card>
+          )}
+        </div>
+      )}
+    </>
+  )
+}
+
+/**
+ * "Standings" everywhere. This table was called three different things across
+ * the app — Ranks, Standings and Leaderboard — for one list.
+ */
+function StandingsTab({
+  table,
+  matchCount,
+  meId,
+}: {
+  table: Standing[]
+  matchCount: number
+  meId?: string
+}) {
+  const [shown, showAll] = useShowAll(table, 10)
+
+  if (table.length === 0)
+    return (
+      <EmptyState
+        icon={Trophy}
+        message="Nothing played yet."
+        hint="The all-time table builds itself as sessions are scored."
+      />
+    )
+
+  return (
+    <>
+      <p className="tnum mb-3 text-meta text-muted">
+        All time · {matchCount} {matchCount === 1 ? 'match' : 'matches'}
+      </p>
+      <StandingsList table={shown} meId={meId}>
+        {showAll && <ShowAllRow count={table.length} noun="players" onClick={showAll} />}
+      </StandingsList>
+      <RankingNote />
+    </>
+  )
+}
+
+export type DueRow = { memberId: string; name: string; owed: number; sessions: number }
+
+/**
+ * What the club is owed, across every session. RLS decides the scope, not this
+ * component: a host gets every member's balance, a member gets only their own.
+ *
+ * Overpaid and settled lines drop out rather than netting off against what
+ * someone still owes for a different night — a credit on one session is not a
+ * payment on another, and the host is collecting per session.
+ */
+export function duesRows(ledger: LedgerEntry[], names: Map<string, string>): DueRow[] {
+  const owing = new Map<string, { owed: number; sessions: number }>()
+  for (const entry of ledger) {
+    const outstanding = entry.amount_due - entry.amount_paid
+    if (outstanding <= 0) continue
+    const row = owing.get(entry.club_member_id) ?? { owed: 0, sessions: 0 }
+    row.owed += outstanding
+    row.sessions++
+    owing.set(entry.club_member_id, row)
+  }
+
+  return [...owing.entries()]
+    .map(([memberId, row]) => ({
+      memberId,
+      name: names.get(memberId) ?? 'Unknown',
+      ...row,
+    }))
+    .sort((x, y) => y.owed - x.owed)
+}
+
+function DuesTab({
+  rows,
+  currency,
+  admin,
+}: {
+  rows: DueRow[]
+  currency: string
+  admin: boolean
+}) {
+  const [query, setQuery] = useState('')
+
+  if (rows.length === 0)
+    return (
+      <EmptyState
+        icon={Check}
+        message={admin ? 'Everyone is square.' : "You're all paid up."}
+        hint={admin ? 'Nothing outstanding across any session.' : undefined}
+      />
+    )
+
+  const total = rows.reduce((sum, r) => sum + r.owed, 0)
+  const q = query.trim().toLowerCase()
+  const shown = q ? rows.filter((r) => r.name.toLowerCase().includes(q)) : rows
+
+  return (
+    <>
+      {/* The total used to sit under the list, which on a club this size meant
+          scrolling twenty-eight rows to find out how much was outstanding. */}
+      {admin && (
+        <p className="tnum mb-3 text-meta text-muted">
+          <span className="font-semibold text-ink">{money(total, currency)}</span> outstanding
+          across {rows.length} {rows.length === 1 ? 'player' : 'players'}
+        </p>
+      )}
+
+      {rows.length > 8 && (
+        <div className="mb-3">
+          <SearchField
+            label="Search players who owe"
+            placeholder="Search players"
+            value={query}
+            onChange={setQuery}
+          />
         </div>
       )}
 
-      {/* "Standings" everywhere. This table was called three different things
-          across the app — Ranks, Standings and Leaderboard — for one list. */}
-      <SectionHeading>Standings</SectionHeading>
-      {table.length === 0 ? (
-        <EmptyState
-          icon={Trophy}
-          message="Nothing played yet."
-          hint="The all-time table builds itself as sessions are scored."
-        />
-      ) : (
-        <>
-          <p className="tnum -mt-1 mb-3 text-sm text-muted">
-            All time · {matches.length} {matches.length === 1 ? 'match' : 'matches'}
-          </p>
-          <StandingsList table={table} meId={me?.id} />
-          <RankingNote />
-        </>
-      )}
-
-      <Dues club={club} members={members} ledger={ledger} admin={admin} />
-
-      <SectionHeading>Members</SectionHeading>
-      {members.length === 0 ? (
-        <EmptyState icon={Users} message="No members yet." />
+      {shown.length === 0 ? (
+        <EmptyState message={`Nobody matching “${query.trim()}”.`} />
       ) : (
         <Card className="divide-y divide-hairline p-0">
-          {members.map((m) => (
+          {shown.map((row) => (
+            <div key={row.memberId} className="flex items-center gap-3 px-4 py-3">
+              <Avatar name={row.name} />
+              <div className="min-w-0 flex-1">
+                <p className="truncate text-body font-medium text-ink">{row.name}</p>
+                <p className="tnum mt-0.5 text-meta text-muted">
+                  {row.sessions} unpaid {row.sessions === 1 ? 'session' : 'sessions'}
+                </p>
+              </div>
+              <span className="tnum text-body font-semibold text-warn">
+                {money(row.owed, currency)}
+              </span>
+            </div>
+          ))}
+        </Card>
+      )}
+    </>
+  )
+}
+
+function MembersTab({
+  clubId,
+  members,
+  me,
+  admin,
+  reload,
+}: {
+  clubId: string
+  members: Member[]
+  me: Member | null
+  admin: boolean
+  reload: () => void
+}) {
+  const [query, setQuery] = useState('')
+  const q = query.trim().toLowerCase()
+  // No cap here: this is the roster, and search — not a "show all" button — is
+  // what you reach for when you came looking for one person.
+  const shown = q ? members.filter((m) => m.display_name.toLowerCase().includes(q)) : members
+
+  return (
+    <>
+      {members.length > 8 && (
+        <div className="mb-3">
+          <SearchField
+            label="Search members"
+            placeholder="Search members"
+            value={query}
+            onChange={setQuery}
+          />
+        </div>
+      )}
+
+      {members.length === 0 ? (
+        <EmptyState icon={Users} message="No members yet." />
+      ) : shown.length === 0 ? (
+        <EmptyState message={`Nobody matching “${query.trim()}”.`} />
+      ) : (
+        <Card className="divide-y divide-hairline p-0">
+          {shown.map((m) => (
             <MemberRow
               key={m.id}
               member={m}
@@ -204,91 +422,26 @@ export function ClubDetail() {
         <>
           <SectionHeading>Add a guest</SectionHeading>
           <Card>
-            <p className="mb-3 text-sm text-muted">
+            <p className="mb-3 text-meta text-muted">
               For a regular who never brings a phone. They keep a record across
               sessions, and can take the name over themselves later with a join code.
             </p>
-            <AddGuestForm clubId={id} onAdded={reload} submitLabel="Add guest" />
+            <AddGuestForm clubId={clubId} onAdded={reload} submitLabel="Add guest" />
           </Card>
-        </>
-      )}
-    </Screen>
-  )
-}
-
-/**
- * What the club is owed, across every session. RLS decides the scope, not this
- * component: a host gets every member's balance, a member gets only their own.
- */
-function Dues({
-  club,
-  members,
-  ledger,
-  admin,
-}: {
-  club: Club
-  members: Member[]
-  ledger: LedgerEntry[]
-  admin: boolean
-}) {
-  const owing = new Map<string, { owed: number; sessions: number }>()
-  for (const entry of ledger) {
-    const outstanding = entry.amount_due - entry.amount_paid
-    if (outstanding <= 0) continue
-    const row = owing.get(entry.club_member_id) ?? { owed: 0, sessions: 0 }
-    row.owed += outstanding
-    row.sessions++
-    owing.set(entry.club_member_id, row)
-  }
-
-  const total = [...owing.values()].reduce((sum, r) => sum + r.owed, 0)
-  const names = new Map(members.map((m) => [m.id, m.display_name]))
-  const rows = [...owing.entries()].sort((x, y) => y[1].owed - x[1].owed)
-
-  if (ledger.length === 0) return null
-
-  return (
-    <>
-      <SectionHeading>{admin ? 'Dues' : 'Your balance'}</SectionHeading>
-      {rows.length === 0 ? (
-        <EmptyState
-          icon={Check}
-          message={admin ? 'Everyone is square.' : "You're all paid up."}
-          hint={
-            admin ? 'Nothing outstanding across any session.' : undefined
-          }
-        />
-      ) : (
-        <>
-          <Card className="divide-y divide-hairline p-0">
-            {rows.map(([memberId, row]) => (
-              <div key={memberId} className="flex items-center gap-3 px-4 py-3">
-                <Avatar name={names.get(memberId) ?? 'Unknown'} />
-                <div className="min-w-0 flex-1">
-                  <p className="truncate font-semibold text-ink">
-                    {names.get(memberId) ?? 'Unknown'}
-                  </p>
-                  <p className="tnum mt-0.5 text-xs text-muted">
-                    {row.sessions} unpaid {row.sessions === 1 ? 'session' : 'sessions'}
-                  </p>
-                </div>
-                <span className="tnum font-bold text-danger">
-                  {money(row.owed, club.currency)}
-                </span>
-              </div>
-            ))}
-          </Card>
-          {admin && (
-            <p className="tnum mt-3 text-right text-sm font-semibold text-ink">
-              Total outstanding {money(total, club.currency)}
-            </p>
-          )}
         </>
       )}
     </>
   )
 }
 
+/**
+ * One line per member, with the host's controls behind a tap.
+ *
+ * They used to sit in the row — a 44px tier `<select>` and a "Make co-host"
+ * button — which wrapped onto a second line on a narrow phone and made this the
+ * tallest row in the app. Twenty-eight of those is a screen and a half of
+ * scrolling spent on controls nobody is currently using.
+ */
 function MemberRow({
   member,
   isMe,
@@ -302,7 +455,8 @@ function MemberRow({
 }) {
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState('')
-  const [renaming, setRenaming] = useState<string | null>(null)
+  const [editing, setEditing] = useState(false)
+  const [name, setName] = useState(member.display_name)
   const guest = isGuest(member)
 
   async function patch(change: { role?: Role; skill_tier?: Tier; display_name?: string }) {
@@ -318,66 +472,74 @@ function MemberRow({
   }
 
   return (
-    <div className="flex flex-wrap items-center gap-3 px-4 py-3">
-      <Avatar name={member.display_name} />
-      <div className="min-w-0 flex-1">
-        {renaming === null ? (
-          <p className="truncate font-semibold text-ink">
+    <div className="px-4 py-3">
+      <div className="flex items-center gap-3">
+        <Avatar name={member.display_name} />
+        <div className="min-w-0 flex-1">
+          <p className="truncate text-body font-medium text-ink">
             {member.display_name}
-            {isMe && <span className="ml-1.5 text-sm font-medium text-muted">(you)</span>}
+            {isMe && <span className="ml-1.5 text-meta text-muted">(you)</span>}
           </p>
-        ) : (
-          <div className="flex gap-2">
-            <Input
-              value={renaming}
-              onChange={(e) => setRenaming(e.target.value)}
-              maxLength={40}
-              autoFocus
-              aria-label={`Rename ${member.display_name}`}
-              className="flex-1"
-            />
-            <Button
-              icon={Check}
-              loading={busy}
-              disabled={!renaming.trim()}
-              className="px-3"
-              aria-label="Save name"
-              onClick={async () => {
-                await patch({ display_name: renaming.trim() })
-                setRenaming(null)
-              }}
-            />
-            {/* There was no way out of this state but to save or leave the
-                screen. Every other inline form in the app has a Cancel. */}
-            <Button
-              variant="ghost"
-              icon={X}
-              disabled={busy}
-              className="px-2"
-              aria-label="Cancel rename"
-              onClick={() => setRenaming(null)}
-            />
+          <div className="mt-0.5 flex flex-wrap items-center gap-1.5">
+            <span className="text-meta text-muted">{TIER_LABEL[member.skill_tier]}</span>
+            {member.role !== 'member' && (
+              <Pill tone="neutral">{member.role === 'owner' ? 'Owner' : 'Co-host'}</Pill>
+            )}
+            {guest && <Pill tone="neutral">Guest</Pill>}
           </div>
-        )}
-        <div className="mt-1 flex flex-wrap items-center gap-1.5">
-          {member.role !== 'member' && (
-            <Pill tone="neutral">{member.role === 'owner' ? 'Owner' : 'Co-host'}</Pill>
-          )}
-          {guest && <Pill tone="neutral">Guest</Pill>}
-          {!canEdit && <Pill tone="neutral">{TIER_LABEL[member.skill_tier]}</Pill>}
         </div>
+
+        {canEdit && (
+          <Button
+            variant="ghost"
+            icon={editing ? X : Pencil}
+            disabled={busy}
+            className="shrink-0 px-2"
+            aria-expanded={editing}
+            aria-label={editing ? `Done editing ${member.display_name}` : `Edit ${member.display_name}`}
+            onClick={() => {
+              setName(member.display_name)
+              setError('')
+              setEditing((open) => !open)
+            }}
+          />
+        )}
       </div>
 
-      {canEdit && (
-        <div className="flex items-center gap-2">
-          {/* Controls fill their container, so the width lives on the wrapper. */}
-          <div className="w-36">
+      {editing && (
+        <div className="kq-rise mt-3 space-y-3 border-t border-hairline pt-3">
+          {/* A guest has no login, so there is nothing to promote. Renaming is
+              the affordance they need instead — the host typed the name in and
+              may well have got it wrong. */}
+          {guest && (
+            <Field label="Name">
+              <div className="flex gap-2">
+                <Input
+                  value={name}
+                  onChange={(e) => setName(e.target.value)}
+                  maxLength={40}
+                  autoFocus
+                  aria-label={`Rename ${member.display_name}`}
+                  className="flex-1"
+                />
+                <Button
+                  icon={Check}
+                  loading={busy}
+                  disabled={!name.trim() || name.trim() === member.display_name}
+                  className="shrink-0 px-3"
+                  aria-label="Save name"
+                  onClick={() => void patch({ display_name: name.trim() })}
+                />
+              </div>
+            </Field>
+          )}
+
+          <Field label="Skill level">
             <Select
               aria-label={`Skill level for ${member.display_name}`}
               value={member.skill_tier}
               disabled={busy}
               onChange={(e) => void patch({ skill_tier: e.target.value as Tier })}
-              className="text-sm"
             >
               {TIERS.map((t) => (
                 <option key={t} value={t}>
@@ -385,29 +547,17 @@ function MemberRow({
                 </option>
               ))}
             </Select>
-          </div>
+          </Field>
 
-          {/* A guest has no login, so there is nothing to promote. Renaming is
-              the affordance they need instead — the host typed the name in and
-              may well have got it wrong. */}
-          {guest ? (
-            renaming === null && (
-              <Button
-                variant="ghost"
-                icon={Pencil}
-                disabled={busy}
-                className="px-3"
-                aria-label={`Rename ${member.display_name}`}
-                onClick={() => setRenaming(member.display_name)}
-              />
-            )
-          ) : (
+          {!guest && (
             // "Remove" here demoted a co-host, while "Remove" on a queue row
             // removes the person. One of them had to change its word.
             <Button
-              variant={member.role === 'admin' ? 'ghost' : 'secondary'}
-              size="sm"
+              // Taking privileges away is the destructive direction, so it is
+              // the one that says so — it used to be the quieter of the two.
+              variant={member.role === 'admin' ? 'dangerQuiet' : 'primary'}
               icon={ShieldCheck}
+              full
               disabled={busy}
               onClick={() => void patch({ role: member.role === 'admin' ? 'member' : 'admin' })}
             >
@@ -417,7 +567,7 @@ function MemberRow({
         </div>
       )}
 
-      {error && <p className="w-full text-sm font-medium text-danger">{error}</p>}
+      {error && <p className="mt-2 text-meta font-medium text-danger">{error}</p>}
     </div>
   )
 }
@@ -494,7 +644,7 @@ function CreateSessionForm({
             />
           </Field>
         </div>
-        {error && <p className="text-sm font-medium text-danger">{error}</p>}
+        {error && <p className="text-meta font-medium text-danger">{error}</p>}
         <div className="flex gap-2">
           <Button type="submit" disabled={busy || !name.trim()} full>
             {busy ? 'Creating…' : 'Create session'}

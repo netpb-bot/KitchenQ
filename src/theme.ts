@@ -6,30 +6,31 @@
  * if a pair falls below contrast.
  */
 export const palette = {
-  page: '#F7F9F2',
+  page: '#FAF9F7',
   surface: '#FFFFFF',
-  surfaceDark: '#2E4A0C',
-  surfaceDarker: '#1E3308',
-  surfaceSunk: '#E7EDDC',
+  surfaceDark: '#16181A',
+  surfaceDarker: '#0E0F11',
+  surfaceSunk: '#E9E7E1',
 
   brand: '#7CB518',
-  primary: '#4A7C15',
-  accent: '#C6E82F',
-  tint: '#EDF7D4',
+  primary: '#41701A',
+  accent: '#B6DE4F',
+  tint: '#EEF4E2',
 
-  ink: '#1A2416',
-  muted: '#65745D',
-  hairline: '#E3EAD8',
+  ink: '#1A1A18',
+  muted: '#6E6C66',
+  hairline: '#E6E3DD',
 
   warn: '#8A5800',
   warnFill: '#F0B429',
   warnTint: '#FDF0D9',
-  danger: '#C0392B',
-  dangerTint: '#FBE9E7',
+  danger: '#B3261E',
+  dangerTint: '#FBEAE8',
+  dangerOnDark: '#FFB4AB',
 
   // Second and third on the podium. Gold is warnFill — the amber is already in
   // the palette and a second near-identical yellow would be a token for nothing.
-  silver: '#C3CCBB',
+  silver: '#C9C7C0',
   bronze: '#CD7F32',
 } as const
 
@@ -50,6 +51,31 @@ export function contrast(a: string, b: string): number {
   const [hi, lo] = [luminance(a), luminance(b)].sort((x, y) => y - x)
   return (hi + 0.05) / (lo + 0.05)
 }
+
+/**
+ * WHAT EACH COLOUR SAYS
+ *
+ * One meaning per colour. A colour that means three things means nothing, and
+ * the audit that produced this list found green doing duty as the CTA, as
+ * "live", and — on dark cards — as the error state.
+ *
+ *   primary, filled      the one main action on this view. Not for an action
+ *                        that repeats down a list: a column of filled green
+ *                        stops reading as an action at all.
+ *   tint + primary text  a positive action at low weight. Mark paid.
+ *   brand / accent       the same two jobs, on a dark surface. Never on light.
+ *   fill (neutral)       a supporting action, or one of several equals.
+ *   ghost                dismiss, cancel, optional extras. Nothing with a
+ *                        consequence.
+ *   danger               destructive, or a write that failed. Nothing else —
+ *                        in particular not money owed, which is not an error.
+ *   warn / warnFill      unresolved: owing, partial, not started yet. Never a
+ *                        finished state, however that state turned out.
+ *
+ * And none of them alone: WCAG 1.4.1 is Level A, so every status carries a
+ * second cue — a word, an icon, a weight, or a shape — for the ~1 in 12 men
+ * with a colour vision deficiency.
+ */
 
 /**
  * Every foreground/background pair the UI actually uses. Adding a new colour
@@ -79,11 +105,19 @@ export const TEXT_PAIRS: Array<[PaletteKey, PaletteKey]> = [
   ['surface', 'primary'],
   ['surface', 'danger'],
 
-  // Dark hero cards
+  // Dark hero cards. `brand` is legible here even though it is illegal on
+  // white — the LIVE pill keeps its fill against a near-black card.
   ['surface', 'surfaceDark'],
   ['accent', 'surfaceDark'],
+  ['brand', 'surfaceDark'],
   ['surface', 'surfaceDarker'],
   ['accent', 'surfaceDarker'],
+
+  // The on-dark halves of danger and warn. `danger` itself is 1.8:1 here, which
+  // is why failed writes on a dark card used to be printed in the success green.
+  ['dangerOnDark', 'surfaceDark'],
+  ['dangerOnDark', 'surfaceDarker'],
+  ['warnFill', 'surfaceDark'],
 
   // Podium medals. All three carry ink, never white.
   ['ink', 'silver'],

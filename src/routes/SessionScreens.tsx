@@ -1,12 +1,12 @@
 import { useEffect, useState } from 'react'
-import { Link, useNavigate, useParams } from 'react-router-dom'
+import { Link, useLocation, useNavigate, useParams } from 'react-router-dom'
 import type { ReactNode } from 'react'
 import {
+  Banknote,
   Check,
   ChevronLeft,
   Clock,
   Crown,
-  History,
   LayoutGrid,
   Pencil,
   RotateCcw,
@@ -17,6 +17,7 @@ import {
   Users,
 } from 'lucide-react'
 import {
+  duration,
   getClub,
   getSession,
   isAdmin,
@@ -57,8 +58,10 @@ import {
   Pill,
   Screen,
   SectionHeading,
+  ShowAllRow,
   StatCard,
   StatTile,
+  useShowAll,
 } from '../components/ui'
 import { palette } from '../theme'
 
@@ -110,12 +113,13 @@ function SessionScreen({
   return (
     <Screen
       title={title}
+      action={view.data && <FeesLink view={view.data} />}
       lead={
         <Link
           to="/"
-          className="-ml-1 inline-flex min-h-11 items-center gap-1 pt-3 text-sm font-semibold text-muted"
+          className="-ml-1 inline-flex min-h-11 items-center gap-1 pt-3 text-meta font-medium text-muted"
         >
-          <ChevronLeft size={18} aria-hidden />
+          <ChevronLeft size={17} aria-hidden />
           Home
         </Link>
       }
@@ -141,6 +145,50 @@ function SessionScreen({
   )
 }
 
+/**
+ * Fees lives in the header, not in the tab bar: it is a once-a-night host job,
+ * and a permanent tab for it cost a quarter of the app's most-tapped control.
+ * It carries its label, though — a lone banknote glyph said neither "tap me"
+ * nor "money". The dot is the part that matters beyond that: it says "there is
+ * money outstanding" without anyone having to go and look.
+ *
+ * An admin sees the dot when anyone owes; a player only when they do.
+ */
+function FeesLink({ view }: { view: View }) {
+  const navigate = useNavigate()
+  const { pathname } = useLocation()
+
+  // Every session screen shares this header, Fees included — and a control
+  // that points at the page you are on is at best dead, at worst a dead end.
+  if (pathname.endsWith('/fees')) return null
+
+  const mine = isAdmin(view.me)
+    ? view.ledger
+    : view.ledger.filter((e) => e.club_member_id === view.me?.id)
+  const owing = mine.some((e) => e.amount_due > e.amount_paid)
+
+  return (
+    <Button
+      variant="secondary"
+      size="sm"
+      icon={Banknote}
+      className="relative"
+      // Absolute, not `to="fees"`: a relative path resolves against the current
+      // screen, so from Standings it aimed at /standings/fees and 404'd.
+      onClick={() => navigate(`/session/${view.session.id}/fees`)}
+      aria-label={owing ? 'Fees — payments outstanding' : undefined}
+    >
+      Fees
+      {owing && (
+        <span
+          aria-hidden
+          className="absolute -top-0.5 -right-0.5 h-2 w-2 rounded-full bg-warn-fill ring-2 ring-page"
+        />
+      )}
+    </Button>
+  )
+}
+
 function SessionHeader({ view, reload }: { view: View; reload: () => void }) {
   const { session, me, players, matches } = view
   const waiting = players.filter((p) => p.status === 'waiting').length
@@ -163,14 +211,18 @@ function SessionHeader({ view, reload }: { view: View; reload: () => void }) {
               LIVE
             </Pill>
           ) : (
-            <Pill tone="onDark">{session.status === 'draft' ? 'Not started' : 'Ended'}</Pill>
+            // A draft is unresolved and an ended session is finished. Both were
+            // rendering as the same grey chip, which said neither.
+            <Pill tone={session.status === 'draft' ? 'warnOnDark' : 'onDark'}>
+              {session.status === 'draft' ? 'Not started' : 'Ended'}
+            </Pill>
           )}
-          <p className="mt-2 truncate text-xl font-bold text-white">{session.name}</p>
+          <p className="mt-2.5 truncate text-title font-semibold text-white">{session.name}</p>
         </div>
         <ShareCode code={session.join_code} />
       </div>
 
-      <div className="mt-4 grid grid-cols-4 gap-2 border-t border-white/10 pt-4">
+      <div className="mt-5 grid grid-cols-4 gap-2 border-t border-white/10 pt-5">
         <StatTile icon={Users} value={players.length} label="Players" tone="onDark" />
         <StatTile icon={LayoutGrid} value={session.court_count} label="Courts" tone="onDark" />
         <StatTile icon={Timer} value={waiting} label="In queue" tone="onDark" />
@@ -178,7 +230,7 @@ function SessionHeader({ view, reload }: { view: View; reload: () => void }) {
       </div>
 
       {admin && (
-        <div className="mt-4 border-t border-white/10 pt-4">
+        <div className="mt-5 border-t border-white/10 pt-5">
           {session.status === 'draft' && (
             <Button variant="brand" full loading={busy} onClick={() => move('live')}>
               Start session
@@ -198,7 +250,7 @@ function SessionHeader({ view, reload }: { view: View; reload: () => void }) {
           )}
           {session.status === 'ended' && (
             <Button
-              variant="secondary"
+              variant="secondaryOnDark"
               icon={RotateCcw}
               full
               loading={busy}
@@ -213,7 +265,7 @@ function SessionHeader({ view, reload }: { view: View; reload: () => void }) {
             </Button>
           )}
           {error && (
-            <p role="alert" className="mt-2 text-sm font-medium text-accent">
+            <p role="alert" className="mt-2 text-meta font-medium text-danger-on-dark">
               {error}
             </p>
           )}
@@ -243,7 +295,7 @@ function PlayerScoringToggle({
     <>
       {/* The whole row is the target: the box itself is only 24px wide. */}
       <label className="mt-3 flex min-h-11 items-center justify-between gap-3">
-        <span className="text-sm font-medium text-white/80">
+        <span className="text-meta font-medium text-white/70">
           Players can enter their own score
         </span>
         <input
@@ -261,7 +313,7 @@ function PlayerScoringToggle({
         />
       </label>
       {error && (
-        <p role="alert" className="text-sm font-medium text-accent">
+        <p role="alert" className="text-meta font-medium text-danger-on-dark">
           {error}
         </p>
       )}
@@ -307,16 +359,19 @@ function ShareCode({ code }: { code: string }) {
     <button
       onClick={() => void share()}
       aria-label={`Share join code ${code.split('').join(' ')}`}
-      className="min-h-11 shrink-0 rounded-xl bg-white/10 px-3 py-2 text-center"
+      className="min-h-11 shrink-0 rounded-xl bg-fill-on-dark px-3 py-2 text-center ring-1 ring-white/10 transition-colors active:scale-95 md:hover:bg-fill-on-dark-strong"
     >
       <span
         aria-hidden
-        className="flex items-center justify-center gap-1 text-[10px] font-semibold uppercase tracking-wider text-white/60"
+        className="flex items-center justify-center gap-1 text-caption font-semibold uppercase text-white/55"
       >
         {result === 'copied' ? <Check size={11} /> : <Share2 size={11} />}
         {result === 'copied' ? 'Copied' : result === 'failed' ? 'Copy failed' : 'Code'}
       </span>
-      <span aria-hidden className="tnum block text-base font-bold tracking-widest text-accent">
+      <span
+        aria-hidden
+        className="tnum mt-0.5 block text-body font-semibold tracking-[0.18em] text-accent"
+      >
         {code}
       </span>
       {/* Announced only when it changes; the button's own name stays stable. */}
@@ -339,8 +394,8 @@ function ShareCode({ code }: { code: string }) {
 function NotJoined({ code }: { code: string }) {
   const navigate = useNavigate()
   return (
-    <div className="mt-4 flex flex-wrap items-center gap-3 rounded-2xl bg-tint px-4 py-2.5">
-      <p className="min-w-0 flex-1 text-sm font-semibold text-primary">
+    <div className="mt-4 flex flex-wrap items-center gap-3 rounded-card bg-tint px-4 py-3 ring-1 ring-primary/12">
+      <p className="min-w-0 flex-1 text-meta font-medium text-primary">
         You're watching, not playing.
       </p>
       <Button size="sm" onClick={() => navigate(`/join?code=${code}`)}>
@@ -378,46 +433,102 @@ export function SessionLive() {
   )
 }
 
-export function SessionRanks() {
+/**
+ * Standings, then the matches that produced them. These used to be two tabs,
+ * which meant checking *why* someone was top cost a tab switch — the results
+ * are the evidence for the table, so they live directly under it.
+ */
+export function SessionStandings() {
   return (
-    <SessionScreen title="Ranks">
-      {(view) => {
-        const table = standings(
-          view.players.map((p) => ({
-            memberId: p.club_members.id,
-            name: p.club_members.display_name,
-          })),
-          view.matches,
-        )
-
-        if (table.length === 0) {
-          return (
-            <div className="mt-6">
-              <EmptyState
-                icon={Trophy}
-                message="No matches finished yet."
-                hint="Standings appear as soon as the first score is recorded."
-              />
-            </div>
-          )
-        }
-
-        return (
-          <>
-            {view.session.status === 'ended' && <Recap view={view} table={table} />}
-
-            <SectionHeading>Standings</SectionHeading>
-            <StandingsList table={table} meId={view.me?.id} />
-            <RankingNote />
-          </>
-        )
-      }}
+    <SessionScreen title="Standings">
+      {(view, reload) => <StandingsBody view={view} reload={reload} />}
     </SessionScreen>
   )
 }
 
-/** Bar heights are proportional to wins, so the podium tells the truth. */
-const MEDALS = [palette.warnFill, palette.silver, palette.bronze]
+function StandingsBody({ view, reload }: { view: View; reload: () => void }) {
+  const table = standings(
+    view.players.map((p) => ({
+      memberId: p.club_members.id,
+      name: p.club_members.display_name,
+    })),
+    view.matches,
+  )
+  const played = view.matches.filter((m) => m.ended_at)
+
+  // Twenty-eight players and a four-court night is a table plus sixty cards. The
+  // headings carry the true totals, so a capped list reads as a cap rather than
+  // as results that failed to load.
+  const [shownTable, showAllPlayers] = useShowAll(table, 10)
+  const [shownMatches, showAllMatches] = useShowAll(played, 5)
+
+  if (table.length === 0) {
+    return (
+      <div className="mt-6">
+        <EmptyState
+          icon={Trophy}
+          message="No matches finished yet."
+          hint="Standings and results appear as soon as the first score is recorded."
+        />
+      </div>
+    )
+  }
+
+  const names = new Map(
+    view.players.map((p) => [p.club_members.id, p.club_members.display_name]),
+  )
+
+  return (
+    <>
+      {view.session.status === 'ended' && <Recap view={view} table={table} />}
+
+      <SectionHeading>Standings</SectionHeading>
+      <StandingsList table={shownTable} meId={view.me?.id}>
+        {showAllPlayers && (
+          <ShowAllRow count={table.length} noun="players" onClick={showAllPlayers} />
+        )}
+      </StandingsList>
+      <RankingNote />
+
+      <SectionHeading>
+        {played.length} {played.length === 1 ? 'match' : 'matches'}
+      </SectionHeading>
+      <div className="space-y-3">
+        {shownMatches.map((match) => (
+          <FinishedMatch
+            key={match.id}
+            match={match}
+            names={names}
+            session={view.session}
+            admin={isAdmin(view.me)}
+            reload={reload}
+          />
+        ))}
+        {showAllMatches && (
+          <Card className="p-0">
+            <ShowAllRow count={played.length} noun="matches" onClick={showAllMatches} />
+          </Card>
+        )}
+      </div>
+    </>
+  )
+}
+
+/**
+ * Colour and height are a function of place and nothing else. Height driven by
+ * wins — as it used to be — contradicts the table, which ranks on adjusted win
+ * rate (see standings()): a player with more raw wins can legitimately place
+ * second and got the taller block for it. It also collapsed to three identical
+ * slabs whenever the top three were level on wins, which on a club night is the
+ * common case rather than the edge one.
+ *
+ * `order` puts 2nd–1st–3rd on screen while the DOM stays in rank order.
+ */
+const PLACES = [
+  { fill: palette.warnFill, height: '6.5rem', order: 'order-2' },
+  { fill: palette.silver, height: '4.5rem', order: 'order-1' },
+  { fill: palette.bronze, height: '3.25rem', order: 'order-3' },
+]
 
 /** Shown once the session has ended. The only celebration surface in the app. */
 function Recap({ view, table }: { view: View; table: Standing[] }) {
@@ -425,9 +536,7 @@ function Recap({ view, table }: { view: View; table: Standing[] }) {
   const played = matches.filter((m) => m.ended_at)
   const [shared, setShared] = useState<'copied' | 'failed' | null>(null)
   const winner = table[0]
-  // Second, first, third — the podium reads left to right as it stands.
-  const podium = [table[1], table[0], table[2]].filter(Boolean)
-  const mostWins = Math.max(1, ...podium.map((row) => row.wins))
+  const podium = table.slice(0, 3)
 
   return (
     <div className="mt-6 space-y-3">
@@ -438,14 +547,14 @@ function Recap({ view, table }: { view: View; table: Standing[] }) {
           <Sparkles size={12} strokeWidth={2.5} aria-hidden />
           Session wrapped
         </Eyebrow>
-        <h2 className="mt-1 text-2xl font-bold tracking-tight text-balance text-ink">
+        <h2 className="mt-1.5 text-display font-bold text-balance text-ink">
           {winner ? `${winner.name} took the night!` : 'That’s a wrap!'}
         </h2>
-        <p className="text-sm text-muted">{session.name}</p>
+        <p className="mt-1 text-meta text-muted">{session.name}</p>
       </div>
 
       {winner && (
-        <Card className="kq-pop relative overflow-hidden bg-tint">
+        <Card className="kq-pop relative overflow-hidden bg-tint ring-1 ring-primary/12">
           <Trophy
             size={130}
             strokeWidth={1.25}
@@ -464,53 +573,65 @@ function Recap({ view, table }: { view: View; table: Standing[] }) {
             </span>
             <div className="min-w-0 flex-1">
               <Pill tone="neutral">#1</Pill>
-              <p className="mt-1 truncate text-xl font-bold text-ink">{winner.name}</p>
-              <p className="text-xs text-muted">out of {table.length} players</p>
+              <p className="mt-1.5 truncate text-title font-semibold text-ink">{winner.name}</p>
+              {/* The win/loss trio that used to sit here is on the podium now,
+                  for all three players. What's left is the one number nothing
+                  else on this screen states.
+                  ponytail: raw wins/games, not the shrunk `rate` the table
+                  ranks on — a recap celebrates what actually happened, and
+                  RankingNote explains why the table disagrees. */}
+              <p className="tnum text-meta text-muted">
+                {Math.round((winner.wins / Math.max(1, winner.games)) * 100)}% win rate · out of{' '}
+                {table.length} players
+              </p>
             </div>
-          </div>
-          <div className="relative mt-4 grid grid-cols-3 gap-2 border-t border-primary/15 pt-3 text-center">
-            <WinnerStat value={winner.wins} label={winner.wins === 1 ? 'Win' : 'Wins'} />
-            <WinnerStat value={winner.losses} label={winner.losses === 1 ? 'Loss' : 'Losses'} />
-            <WinnerStat
-              value={`${Math.round((winner.wins / Math.max(1, winner.games)) * 100)}%`}
-              label="Win rate"
-            />
           </div>
         </Card>
       )}
 
       {podium.length > 1 && (
-        <Card>
+        // pb-0 stands the blocks on the card's bottom edge; overflow-hidden
+        // lets the card's own radius clip their square corners.
+        <Card className="overflow-hidden pb-0">
           <Eyebrow>Podium</Eyebrow>
-          <div className="mt-3 flex items-end justify-center gap-3">
-            {podium.map((row) => {
-              const place = table.indexOf(row) + 1
+          {/* items-end is what makes the staircase: unequal blocks push each
+              column's name and avatar to a different height for free. */}
+          <ol aria-label="Podium" className="mt-4 flex items-end justify-center gap-2">
+            {podium.map((row, i) => {
+              const { fill, height, order } = PLACES[i]
+              const first = i === 0
               return (
-                <div key={row.memberId} className="flex flex-1 flex-col items-center gap-1.5">
-                  <Avatar name={row.name} size={place === 1 ? 'lg' : 'md'} />
-                  <p className="w-full truncate text-center text-xs font-semibold text-ink">
+                <li
+                  key={row.memberId}
+                  className={`flex min-w-0 flex-1 flex-col items-center ${order}`}
+                >
+                  <Avatar name={row.name} size={first ? 'lg' : 'md'} />
+                  <p className="mt-1.5 w-full truncate text-center text-meta font-medium text-ink">
                     {row.name}
                   </p>
-                  <p className="tnum text-[11px] text-muted">
-                    {row.wins}
-                    {row.wins === 1 ? ' win' : ' wins'}
+                  {/* W–L, not "1 win": on a club night the top three are often
+                      level on wins and the old label said nothing. */}
+                  <p className="tnum text-caption text-muted">
+                    {row.wins}–{row.losses}
                   </p>
                   <div
-                    className="kq-grow flex w-full items-start justify-center rounded-t-xl pt-2"
+                    className="kq-grow mt-2 flex w-full items-center justify-center rounded-t-xl"
                     style={{
-                      // Proportional to wins, floored so third place is still a
-                      // bar rather than a line.
-                      height: `${2 + (row.wins / mostWins) * 4}rem`,
-                      backgroundColor: MEDALS[place - 1],
-                      animationDelay: `${(4 - place) * 0.12}s`,
+                      height,
+                      backgroundColor: fill,
+                      animationDelay: `${(3 - i) * 0.12}s`,
                     }}
                   >
-                    <span className="tnum text-lg font-bold text-ink">{place}</span>
+                    <span
+                      className={`tnum font-bold text-ink ${first ? 'text-display' : 'text-title'}`}
+                    >
+                      {i + 1}
+                    </span>
                   </div>
-                </div>
+                </li>
               )
             })}
-          </div>
+          </ol>
         </Card>
       )}
 
@@ -523,7 +644,8 @@ function Recap({ view, table }: { view: View; table: Standing[] }) {
       </div>
 
       <Button
-        variant="brand"
+        // `brand` is the on-dark green. This sits on the page, so `primary`.
+        variant="primary"
         full
         icon={shared === 'copied' ? Check : Share2}
         onClick={() => {
@@ -541,70 +663,6 @@ function Recap({ view, table }: { view: View; table: Standing[] }) {
             : 'Share recap'}
       </Button>
     </div>
-  )
-}
-
-function WinnerStat({ value, label }: { value: string | number; label: string }) {
-  return (
-    <div>
-      <p className="tnum text-2xl font-bold leading-none text-primary">{value}</p>
-      <p className="mt-1 text-[10px] font-medium uppercase tracking-wider text-muted">{label}</p>
-    </div>
-  )
-}
-
-/** Wall-clock length of the session, as "1h 45m". Blank if it never started. */
-function duration(session: Session): string {
-  if (!session.started_at) return '—'
-  const end = session.ended_at ? new Date(session.ended_at) : new Date()
-  const minutes = Math.max(0, Math.round((end.getTime() - new Date(session.started_at).getTime()) / 60000))
-  const hours = Math.floor(minutes / 60)
-  return hours > 0 ? `${hours}h ${minutes % 60}m` : `${minutes}m`
-}
-
-export function SessionHistory() {
-  return (
-    <SessionScreen title="History">
-      {(view, reload) => {
-        const { players, matches, session } = view
-        const played = matches.filter((m) => m.ended_at)
-        const names = new Map(
-          players.map((p) => [p.club_members.id, p.club_members.display_name]),
-        )
-
-        if (played.length === 0) {
-          return (
-            <div className="mt-6">
-              <EmptyState
-                icon={History}
-                message="No matches finished yet."
-                hint="Every match shows up here once its score is recorded."
-              />
-            </div>
-          )
-        }
-
-        return (
-          <>
-            <SectionHeading>
-              {played.length} {played.length === 1 ? 'match' : 'matches'}
-            </SectionHeading>
-            <div className="space-y-3">
-              {played.map((match) => (
-                <FinishedMatch
-                  key={match.id}
-                  match={match}
-                  names={names}
-                  session={session}
-                  admin={isAdmin(view.me)}
-                  reload={reload}
-                />
-              ))}
-            </div>
-          </>
-        )
-      }}
-    </SessionScreen>
   )
 }
 
@@ -626,7 +684,7 @@ function FinishedMatch({
 
   return (
     <Card>
-      <div className="flex items-center justify-between gap-2 text-xs font-semibold text-muted">
+      <div className="flex items-center justify-between gap-2 text-caption font-semibold uppercase text-muted">
         <span>Court {match.court_number}</span>
         <span className="tnum">
           {new Date(match.ended_at!).toLocaleTimeString(undefined, {

@@ -52,16 +52,16 @@ export function InstallPrompt() {
   return (
     <Card className="mt-3 flex items-start gap-3">
       <div className="min-w-0 flex-1">
-        <p className="font-semibold text-ink">Add KitchenQ to your home screen</p>
+        <p className="text-body font-medium text-ink">Add KitchenQ to your home screen</p>
         {ios ? (
-          <p className="mt-1 flex flex-wrap items-center gap-1 text-sm text-muted">
+          <p className="mt-1 flex flex-wrap items-center gap-1 text-meta text-muted">
             Tap <Share size={15} className="inline text-primary" aria-hidden />
             <span className="font-semibold text-ink">Share</span>, then
             <span className="font-semibold text-ink">Add to Home Screen</span>.
           </p>
         ) : (
           <>
-            <p className="mt-1 text-sm text-muted">
+            <p className="mt-1 text-meta text-muted">
               Opens full screen, straight to tonight's session.
             </p>
             <div className="mt-3">

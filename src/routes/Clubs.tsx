@@ -61,10 +61,10 @@ export function Clubs() {
           {clubs.data!.map((club) => (
             <Link key={club.id} to={`/clubs/${club.id}`} className="block">
               <Card interactive className="flex items-center gap-3">
-                <span className="flex h-11 w-11 shrink-0 items-center justify-center rounded-full bg-tint text-primary">
+                <span className="flex h-11 w-11 shrink-0 items-center justify-center rounded-full bg-fill text-ink">
                   <Users size={20} strokeWidth={2.25} aria-hidden />
                 </span>
-                <span className="min-w-0 flex-1 font-semibold text-ink">{club.name}</span>
+                <span className="min-w-0 flex-1 text-body font-medium text-ink">{club.name}</span>
                 <ChevronRight size={20} className="text-muted" aria-hidden />
               </Card>
             </Link>
@@ -74,10 +74,10 @@ export function Clubs() {
 
       <Eyebrow className="mt-7 mb-2">Playing somewhere else tonight?</Eyebrow>
       <Card className="flex items-center gap-3">
-        <span className="flex h-11 w-11 shrink-0 items-center justify-center rounded-full bg-tint text-primary">
+        <span className="flex h-11 w-11 shrink-0 items-center justify-center rounded-full bg-fill text-ink">
           <KeyRound size={20} strokeWidth={2.25} aria-hidden />
         </span>
-        <p className="min-w-0 flex-1 text-sm text-muted">
+        <p className="min-w-0 flex-1 text-meta text-muted">
           A join code gets you into a session and its club in one step.
         </p>
         {/* Not a <Link> wrapping a <Button>: nesting them is invalid, and a
@@ -139,7 +139,7 @@ function CreateClubForm({
             maxLength={40}
           />
         </Field>
-        {error && <p className="text-sm font-medium text-danger">{error}</p>}
+        {error && <p className="text-meta font-medium text-danger">{error}</p>}
         <div className="flex gap-2">
           <Button type="submit" loading={busy} disabled={!name.trim() || !ownerName.trim()} full>
             Create club

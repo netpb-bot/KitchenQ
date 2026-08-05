@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { debounce, randomCode } from './db'
+import { debounce, randomCode, unsettled, type LedgerEntry } from './db'
 
 describe('randomCode', () => {
   const codes = Array.from({ length: 500 }, randomCode)
@@ -20,6 +20,42 @@ describe('randomCode', () => {
 
   it('does not repeat', () => {
     expect(new Set(codes).size).toBe(codes.length)
+  })
+})
+
+describe('unsettled', () => {
+  const entry = (id: string, due: number, paid: number): LedgerEntry => ({
+    id,
+    session_id: 's',
+    club_member_id: `m-${id}`,
+    amount_due: due,
+    amount_paid: paid,
+    status: paid >= due ? 'paid' : paid > 0 ? 'partial' : 'unpaid',
+  })
+
+  const rows = [
+    entry('a', 100, 0), // unpaid
+    entry('b', 100, 40), // partial — still owes 60
+    entry('c', 100, 100), // settled
+    entry('d', 0, 0), // free line, nothing to collect
+    entry('e', 100, 120), // overpaid; leave the extra alone
+  ]
+
+  it('takes the unpaid and the partial, and nothing else', () => {
+    expect(unsettled(rows).map((u) => u.id)).toEqual(['a', 'b'])
+  })
+
+  // "Settle all" collects the rest of what is owed, so a partial goes to the
+  // full amount due — not to its own amount_paid, which would be a no-op.
+  it('targets the full amount due', () => {
+    expect(unsettled(rows)).toEqual([
+      { id: 'a', amount: 100 },
+      { id: 'b', amount: 100 },
+    ])
+  })
+
+  it('is empty once everyone is square', () => {
+    expect(unsettled([entry('c', 100, 100), entry('d', 0, 0)])).toEqual([])
   })
 })
 

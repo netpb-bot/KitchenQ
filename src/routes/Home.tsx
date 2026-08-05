@@ -13,6 +13,7 @@ import {
 } from 'lucide-react'
 import {
   TIER_LABEL,
+  duration,
   listClubMatches,
   listClubs,
   listMembers,
@@ -92,12 +93,21 @@ export function Home() {
   )
   const unpaidSessions = (d?.ledger ?? []).filter((e) => e.amount_due > e.amount_paid).length
 
+  // Mid-session, this is the only thing on Home anyone wants. It rides above the
+  // greeting so it is reachable without a scroll, and drops out of the Tonight
+  // list below so the same session is not offered twice.
+  const liveNow = d?.sessions.find((s) => s.status === 'live') ?? null
+  const tonight = (d?.sessions ?? []).filter((s) => s.id !== liveNow?.id)
+
   return (
     <Screen
       title={d?.me ? 'Ready for your next match?' : 'Welcome to KitchenQ'}
       subtitle={d?.me ? undefined : 'Queue · Rankings · Fees'}
       lead={
-        greeting && <p className="pt-3 text-sm font-medium text-muted">{greeting}</p>
+        <>
+          {liveNow && <LiveNowBar session={liveNow} />}
+          {greeting && <p className="pt-4 text-meta font-medium text-muted">{greeting}</p>}
+        </>
       }
     >
       {/* An unreachable server has its own plain-language banner; repeating it
@@ -124,15 +134,15 @@ export function Home() {
             )
           }
         />
-      ) : d!.sessions.length === 0 ? (
+      ) : tonight.length === 0 ? (
         <EmptyState
           icon={CalendarDays}
-          message="No session running."
+          message={liveNow ? 'Nothing else on tonight.' : 'No session running.'}
           hint="Sessions your clubs have open show up here."
         />
       ) : (
         <div className="kq-stagger space-y-3">
-          {d!.sessions.map((s) => (
+          {tonight.map((s) => (
             <SessionCard key={s.id} session={s} />
           ))}
         </div>
@@ -173,24 +183,52 @@ export function Home() {
         <>
           <SectionHeading>You owe</SectionHeading>
           <Link to={`/clubs/${d!.club.id}`} className="block">
-            <Card className="flex items-center gap-4">
-              <span className="flex h-11 w-11 shrink-0 items-center justify-center rounded-full bg-danger-tint text-danger">
-                <Wallet size={20} strokeWidth={2.25} aria-hidden />
+            <Card interactive className="flex items-center gap-4">
+              <span className="flex h-11 w-11 shrink-0 items-center justify-center rounded-full bg-warn-tint text-warn">
+                <Wallet size={19} strokeWidth={2} aria-hidden />
               </span>
               <div className="min-w-0 flex-1">
-                <p className="tnum font-semibold text-danger">
+                <p className="tnum text-title font-semibold text-warn">
                   {money(owed, d!.club.currency)}
                 </p>
-                <p className="tnum mt-0.5 text-sm text-muted">
+                <p className="tnum mt-0.5 text-meta text-muted">
                   Across {unpaidSessions} {unpaidSessions === 1 ? 'session' : 'sessions'}
                 </p>
               </div>
-              <ChevronRight size={20} className="text-muted" aria-hidden />
+              <ChevronRight size={18} className="text-muted" aria-hidden />
             </Card>
           </Link>
         </>
       )}
     </Screen>
+  )
+}
+
+/**
+ * Pinned above everything else while a session is running: one tap back into
+ * the night in progress. It used to be a row in the Tonight list, which meant
+ * the app's most urgent state looked exactly like its least urgent.
+ *
+ * ponytail: elapsed time is rendered once on mount, not ticked. Home remounts
+ * on every navigation back to it, and this is ambient context, not a stopwatch
+ * — the running one lives on the court card where a match is actually timed.
+ */
+function LiveNowBar({ session }: { session: Session }) {
+  return (
+    <Link
+      to={`/session/${session.id}`}
+      className="mt-3 flex items-center gap-3 rounded-card bg-surface-dark px-4 py-3 text-white shadow-pop transition-transform active:scale-[0.99]"
+    >
+      <span className="kq-pulse h-2 w-2 shrink-0 rounded-full bg-brand" aria-hidden />
+      <span className="min-w-0 flex-1">
+        <span className="block truncate text-body font-medium">{session.name}</span>
+        <span className="tnum mt-0.5 block truncate text-caption uppercase text-white/55">
+          Live · {session.court_count} {session.court_count === 1 ? 'court' : 'courts'}
+          {session.started_at && ` · ${duration(session)}`}
+        </span>
+      </span>
+      <ChevronRight size={18} className="shrink-0 text-white/55" aria-hidden />
+    </Link>
   )
 }
 
@@ -207,8 +245,8 @@ function PlayerCard({
       <DarkCard className="flex items-center gap-4">
         <Avatar name="?" size="lg" />
         <div className="min-w-0 flex-1">
-          <p className="font-semibold text-white">Not a member yet</p>
-          <p className="mt-0.5 text-sm text-white/70">
+          <p className="text-body font-medium text-white">Not a member yet</p>
+          <p className="mt-1 text-meta text-white/70">
             Join a club to start tracking matches.
           </p>
         </div>
@@ -222,17 +260,17 @@ function PlayerCard({
         <div className="flex items-center gap-4">
           <Avatar name={me.display_name} size="lg" />
           <div className="min-w-0 flex-1">
-            <p className="truncate font-semibold text-white">{me.display_name}</p>
-            <div className="mt-1.5 flex items-center gap-2">
+            <p className="truncate text-body font-medium text-white">{me.display_name}</p>
+            <div className="mt-2 flex items-center gap-2">
               <Pill tone="onDark">{TIER_LABEL[me.skill_tier]}</Pill>
-              {club && <span className="truncate text-sm text-white/70">{club.name}</span>}
+              {club && <span className="truncate text-meta text-white/70">{club.name}</span>}
             </div>
           </div>
-          <ChevronRight size={20} className="text-white/50" aria-hidden />
+          <ChevronRight size={18} className="text-white/55" aria-hidden />
         </div>
 
         {record ? (
-          <div className="mt-4 grid grid-cols-4 gap-2 border-t border-white/10 pt-4">
+          <div className="mt-5 grid grid-cols-4 gap-2 border-t border-white/10 pt-5">
             <StatTile icon={Swords} value={record.games} label="Games" tone="onDark" />
             <StatTile icon={Trophy} value={record.wins} label="Wins" tone="onDark" />
             <StatTile
@@ -244,7 +282,7 @@ function PlayerCard({
             <StatTile icon={ListOrdered} value={`#${rank}`} label="Club rank" tone="onDark" />
           </div>
         ) : (
-          <p className="mt-4 border-t border-white/10 pt-4 text-sm text-white/70">
+          <p className="mt-5 border-t border-white/10 pt-5 text-meta text-white/70">
             No matches yet — your record starts with your first recorded score.
           </p>
         )}
@@ -263,13 +301,12 @@ function timeOfDay(): string {
 function SessionCard({ session }: { session: Session }) {
   return (
     <Link to={`/session/${session.id}`} className="block">
-      <Card
-        interactive
-        className={`flex items-center gap-3 ${session.status === 'live' ? 'ring-1 ring-brand/40' : ''}`}
-      >
+      {/* No live-ring here any more: a running session is pinned to the top of
+          the screen by LiveNowBar, so this list is the not-yet-started ones. */}
+      <Card interactive className="flex items-center gap-3">
         <div className="min-w-0 flex-1">
-          <p className="truncate font-semibold text-ink">{session.name}</p>
-          <p className="tnum mt-0.5 text-sm text-muted">
+          <p className="truncate text-body font-medium text-ink">{session.name}</p>
+          <p className="tnum mt-0.5 text-meta text-muted">
             {session.court_count} {session.court_count === 1 ? 'court' : 'courts'} · code{' '}
             {session.join_code}
           </p>
@@ -281,7 +318,7 @@ function SessionCard({ session }: { session: Session }) {
         ) : (
           <Pill tone="warn">Not started</Pill>
         )}
-        <ChevronRight size={20} className="text-muted" aria-hidden />
+        <ChevronRight size={18} className="text-muted" aria-hidden />
       </Card>
     </Link>
   )
@@ -332,15 +369,15 @@ function ActionBody({
   return (
     <>
       <span
-        className={`flex h-11 w-11 shrink-0 items-center justify-center rounded-full ${dark ? 'bg-white/15 text-accent' : 'bg-tint text-primary'}`}
+        className={`flex h-11 w-11 shrink-0 items-center justify-center rounded-full ${dark ? 'bg-fill-on-dark text-accent' : 'bg-fill text-ink'}`}
       >
-        <Icon size={20} strokeWidth={2.25} aria-hidden />
+        <Icon size={19} strokeWidth={2} aria-hidden />
       </span>
       <div className="min-w-0 flex-1">
-        <p className={`font-semibold ${dark ? 'text-white' : 'text-ink'}`}>{title}</p>
-        <p className={`mt-0.5 text-sm ${dark ? 'text-white/70' : 'text-muted'}`}>{detail}</p>
+        <p className={`text-body font-medium ${dark ? 'text-white' : 'text-ink'}`}>{title}</p>
+        <p className={`mt-0.5 text-meta ${dark ? 'text-white/70' : 'text-muted'}`}>{detail}</p>
       </div>
-      <ChevronRight size={20} className={dark ? 'text-white/50' : 'text-muted'} aria-hidden />
+      <ChevronRight size={18} className={dark ? 'text-white/55' : 'text-muted'} aria-hidden />
     </>
   )
 }

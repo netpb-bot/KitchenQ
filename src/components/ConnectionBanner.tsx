@@ -55,7 +55,7 @@ export function ConnectionBanner({
   return (
     <div
       role="status"
-      className="mt-3 flex items-center gap-2 rounded-xl bg-warn-tint px-3 py-2.5 text-sm font-medium text-warn"
+      className="mt-3 flex items-center gap-2 rounded-xl bg-warn-tint px-3 py-2.5 text-meta font-medium text-warn"
     >
       <WifiOff size={16} strokeWidth={2.25} className="shrink-0" aria-hidden />
       {unreachable

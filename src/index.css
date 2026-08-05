@@ -7,50 +7,114 @@
 @import '@fontsource/poppins/latin-700.css';
 
 @theme {
-  /* ---- surfaces ---- */
-  --color-page: #f7f9f2;
+  /* ---- surfaces ----
+     The ground is warm neutral, not tinted green. Green is a signal in this
+     app — live state, the primary action, the court itself — and a green page
+     behind green cards behind a green button leaves it signalling nothing. */
+  --color-page: #faf9f7;
   --color-surface: #ffffff;
-  --color-surface-dark: #2e4a0c;
-  --color-surface-darker: #1e3308;
+  --color-surface-dark: #16181a;
+  --color-surface-darker: #0e0f11;
   /* Backdrop behind the app column on a desktop browser, so the column reads
      as a deliberate frame rather than a page that forgot its max-width. */
-  --color-surface-sunk: #e7eddc;
+  --color-surface-sunk: #e9e7e1;
 
   /* ---- brand ----
      brand is the bright pickleball yellow-green. It is 2.48:1 against white,
      so it NEVER carries white text — dark text only. Anything with a white
-     label uses `primary` instead (5.0:1). See theme.test.ts. */
+     label uses `primary` instead (5.9:1). See theme.test.ts.
+     `accent` is the on-dark green: 11.5:1 on surface-dark, and deliberately
+     softer than a pure lime, which goes neon against a near-black card. */
   --color-brand: #7cb518;
-  --color-primary: #4a7c15;
-  --color-accent: #c6e82f;
-  --color-tint: #edf7d4;
+  --color-primary: #41701a;
+  --color-accent: #b6de4f;
+  --color-tint: #eef4e2;
 
   /* ---- podium ----
      Second and third place. Gold is `warn-fill` — that amber is already in the
      palette and a second near-identical yellow would be a token for nothing.
      All three carry ink text, never white. */
-  --color-silver: #c3ccbb;
+  --color-silver: #c9c7c0;
   --color-bronze: #cd7f32;
 
   /* ---- text ---- */
-  --color-ink: #1a2416;
-  --color-muted: #65745d;
-  --color-hairline: #e3ead8;
+  --color-ink: #1a1a18;
+  --color-muted: #6e6c66;
+  --color-hairline: #e6e3dd;
 
   /* ---- semantic ----
+     One meaning each, and only one. `danger` is destructive or broken — never a
+     neutral fact, and never money owed, which is `warn`: unresolved, not wrong.
+
      `warn` / `danger` are the text-safe shades (used on white or on their own
-     tint). `warn-fill` is a background that carries ink text, never white. */
+     tint). `warn-fill` is a background that carries ink text, never white, and
+     doubles as the on-dark amber at 9.7:1.
+
+     `danger-on-dark` exists because `danger` is 1.8:1 on surface-dark. Without
+     it, three failed writes were being announced in `accent` — the success
+     green — because it was the only legible thing to hand. */
   --color-warn: #8a5800;
   --color-warn-fill: #f0b429;
   --color-warn-tint: #fdf0d9;
-  --color-danger: #c0392b;
-  --color-danger-tint: #fbe9e7;
+  --color-danger: #b3261e;
+  --color-danger-tint: #fbeae8;
+  --color-danger-on-dark: #ffb4ab;
+
+  /* ---- tinted fills ----
+     One neutral fill and its hover step. These were six hand-tuned ink alphas
+     (0.03 through 0.09) and nine white ones doing the same single job.
+     Alpha, so they are not palette entries — nothing carries text on them that
+     is not already checked against the surface underneath. */
+  --color-fill: rgb(26 26 24 / 0.055);
+  --color-fill-strong: rgb(26 26 24 / 0.09);
+  --color-fill-on-dark: rgb(255 255 255 / 0.12);
+  --color-fill-on-dark-strong: rgb(255 255 255 / 0.18);
 
   --font-sans: 'Poppins', ui-sans-serif, system-ui, sans-serif;
 
-  --shadow-card: 0 2px 12px rgba(26, 36, 22, 0.06);
-  --shadow-lift: 0 6px 20px rgba(26, 36, 22, 0.1);
-  --shadow-pop: 0 10px 30px rgba(26, 36, 22, 0.14);
+  /* ---- type scale ----
+     Named steps rather than the stock t-shirt sizes, because the jumps are the
+     whole point: 30 -> 19 -> 15 -> 13 gives hierarchy that 24 -> 18 -> 14 -> 12
+     did not. Weight is not allowed to do this job — the app had 49 semibolds
+     all shouting at the same volume. Tracking is baked in here so it cannot
+     drift across two hundred class strings. */
+  --text-display: 1.875rem;
+  --text-display--line-height: 1.15;
+  --text-display--letter-spacing: -0.022em;
+  --text-title: 1.1875rem;
+  --text-title--line-height: 1.3;
+  --text-title--letter-spacing: -0.012em;
+  --text-body: 0.9375rem;
+  --text-body--line-height: 1.45;
+  --text-meta: 0.8125rem;
+  --text-meta--line-height: 1.4;
+  --text-caption: 0.6875rem;
+  --text-caption--line-height: 1.3;
+  --text-caption--letter-spacing: 0.08em;
+
+  /* Neutral, not ink-green, and diffuse. A card should look lifted off the
+     page, not stamped onto it.
+
+     The hairline edge is the first layer of the shadow rather than a `ring-1
+     ring-hairline` on the Card component. Tailwind emits same-property colour
+     utilities in alphabetical order, not class order, so a card default of
+     `ring-hairline` silently beat every caller that passed `ring-brand/25` or
+     `ring-danger/20` — the live-court ring and the error edge were dead. As a
+     shadow layer it composes instead of competing.
+
+     `--shadow-pop` has no hairline: it is used on near-black surfaces, where a
+     light rim reads as a rendering artefact. */
+  --shadow-card:
+    0 0 0 1px var(--color-hairline), 0 1px 2px rgba(20, 20, 18, 0.04),
+    0 4px 16px rgba(20, 20, 18, 0.04);
+  --shadow-lift:
+    0 0 0 1px var(--color-hairline), 0 2px 4px rgba(20, 20, 18, 0.05),
+    0 10px 28px rgba(20, 20, 18, 0.07);
+  --shadow-pop:
+    0 4px 8px rgba(20, 20, 18, 0.07), 0 16px 40px rgba(20, 20, 18, 0.12);
+
+  /* One card radius, named. Slightly softer than the old rounded-2xl. */
+  --radius-card: 1.25rem;
 
   /* Overshoots slightly, so a confirmation lands rather than fades. */
   --ease-spring: cubic-bezier(0.34, 1.4, 0.64, 1);
@@ -80,6 +144,10 @@ body {
   margin: 0;
   background: var(--color-page);
   color: var(--color-ink);
+  /* The body step of the scale, so anything that does not name a size lands on
+     it rather than on the 16px browser default. */
+  font-size: var(--text-body);
+  line-height: 1.45;
   /* Installed-app behaviour: no rubber-band scroll, no iOS text inflation. */
   overscroll-behavior-y: none;
   -webkit-text-size-adjust: 100%;

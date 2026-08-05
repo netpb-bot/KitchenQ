@@ -39,69 +39,82 @@ export function CourtDiagram({
 }) {
   const empty = teamA.length === 0 && teamB.length === 0
   return (
-    <svg
-      viewBox={`0 0 ${W} ${H}`}
-      className={`w-full ${muted ? 'opacity-45' : ''} ${className}`}
-      role="img"
-      aria-label={
-        empty
-          ? 'Empty court'
-          : `${teamA.map((p) => p.name).join(' and ')} versus ${teamB
-              .map((p) => p.name)
-              .join(' and ')}`
-      }
-    >
-      {/* Playing surface */}
-      <rect x="0" y="0" width={W} height={H} rx="6" fill={palette.tint} />
+    <div className={className}>
+      <svg
+        viewBox={`0 0 ${W} ${H}`}
+        className={`w-full ${muted ? 'opacity-45' : ''}`}
+        role="img"
+        aria-label={
+          empty
+            ? 'Empty court'
+            : `${teamA.map((p) => p.name).join(' and ')} versus ${teamB
+                .map((p) => p.name)
+                .join(' and ')}`
+        }
+      >
+        {/* Playing surface */}
+        <rect x="0" y="0" width={W} height={H} rx="6" fill={palette.tint} />
 
-      {/* Service boxes: the centre line runs from each baseline to the kitchen. */}
-      <line x1="0" y1={H / 2} x2={NET - KITCHEN} y2={H / 2} stroke={palette.hairline} strokeWidth="1.5" />
-      <line x1={NET + KITCHEN} y1={H / 2} x2={W} y2={H / 2} stroke={palette.hairline} strokeWidth="1.5" />
+        {/* Court lines are white, as they are on a real court: they separate the
+            surface from the card without adding another grey to the palette. */}
+        {/* Service boxes: the centre line runs from each baseline to the kitchen. */}
+        <line x1="0" y1={H / 2} x2={NET - KITCHEN} y2={H / 2} stroke={palette.surface} strokeWidth="1.5" />
+        <line x1={NET + KITCHEN} y1={H / 2} x2={W} y2={H / 2} stroke={palette.surface} strokeWidth="1.5" />
 
-      {/* Kitchen — the non-volley zone, filled so it reads at a glance. */}
-      <rect x={NET - KITCHEN} y="0" width={KITCHEN * 2} height={H} fill={palette.brand} opacity="0.14" />
-      <line x1={NET - KITCHEN} y1="0" x2={NET - KITCHEN} y2={H} stroke={palette.hairline} strokeWidth="1.5" />
-      <line x1={NET + KITCHEN} y1="0" x2={NET + KITCHEN} y2={H} stroke={palette.hairline} strokeWidth="1.5" />
+        {/* Kitchen — the non-volley zone, filled so it reads at a glance. */}
+        <rect x={NET - KITCHEN} y="0" width={KITCHEN * 2} height={H} fill={palette.brand} opacity="0.14" />
+        <line x1={NET - KITCHEN} y1="0" x2={NET - KITCHEN} y2={H} stroke={palette.surface} strokeWidth="1.5" />
+        <line x1={NET + KITCHEN} y1="0" x2={NET + KITCHEN} y2={H} stroke={palette.surface} strokeWidth="1.5" />
 
-      {/* Net */}
-      <line
-        x1={NET}
-        y1="-2"
-        x2={NET}
-        y2={H + 2}
-        stroke={palette.ink}
-        strokeWidth="2.5"
-        strokeDasharray="3 3"
-      />
+        {/* Net: a light span between two darker posts. Solid-and-heavy reads as a
+            pole and dashed reads as a cut-here line — the net should recede and
+            let the four players carry the picture. */}
+        <line x1={NET} y1="2" x2={NET} y2={H - 2} stroke={palette.ink} strokeWidth="1.5" opacity="0.22" />
+        <line x1={NET} y1="1" x2={NET} y2="4" stroke={palette.ink} strokeWidth="2.5" opacity="0.55" />
+        <line x1={NET} y1={H - 4} x2={NET} y2={H - 1} stroke={palette.ink} strokeWidth="2.5" opacity="0.55" />
 
-      <rect
-        x="0.75"
-        y="0.75"
-        width={W - 1.5}
-        height={H - 1.5}
-        rx="6"
-        fill="none"
-        stroke={palette.hairline}
-        strokeWidth="1.5"
-      />
-
-      {teamA.map((player, i) => (
-        <PlayerMark
-          key={`a${i}`}
-          player={player}
-          x={NET / 2}
-          y={i === 0 ? H * 0.27 : H * 0.73}
+        {/* Outer boundary in hairline, not white: the card behind it is white, so
+            a white edge erases the court's outline entirely. */}
+        <rect
+          x="0.75"
+          y="0.75"
+          width={W - 1.5}
+          height={H - 1.5}
+          rx="6"
+          fill="none"
+          stroke={palette.hairline}
+          strokeWidth="1.5"
         />
-      ))}
-      {teamB.map((player, i) => (
-        <PlayerMark
-          key={`b${i}`}
-          player={player}
-          x={NET + NET / 2}
-          y={i === 0 ? H * 0.27 : H * 0.73}
-        />
-      ))}
-    </svg>
+
+        {teamA.map((player, i) => (
+          <PlayerMark
+            key={`a${i}`}
+            player={player}
+            x={NET / 2}
+            y={i === 0 ? H * 0.29 : H * 0.71}
+          />
+        ))}
+        {teamB.map((player, i) => (
+          <PlayerMark
+            key={`b${i}`}
+            player={player}
+            x={NET + NET / 2}
+            y={i === 0 ? H * 0.29 : H * 0.71}
+          />
+        ))}
+      </svg>
+
+      {/* Names live in HTML, not SVG: the bottom row used to be drawn below the
+          viewBox and got clipped, and SVG text cannot ellipsize — so long names
+          were chopped at a fixed character count. `truncate` does both properly.
+          aria-hidden because the svg's label already reads the full roster. */}
+      {!empty && (
+        <div className="mt-2 grid grid-cols-2 gap-3" aria-hidden>
+          <p className="truncate text-center text-meta font-medium text-ink">{firstNames(teamA)}</p>
+          <p className="truncate text-center text-meta font-medium text-ink">{firstNames(teamB)}</p>
+        </div>
+      )}
+    </div>
   )
 }
 
@@ -109,14 +122,14 @@ function PlayerMark({ player, x, y }: { player: CourtSide[number]; x: number; y:
   const { name, tier } = player
   return (
     <g>
-      <circle cx={x} cy={y} r="13" fill={avatarColor(name)} stroke={palette.surface} strokeWidth="2" />
+      <circle cx={x} cy={y} r="11" fill={avatarColor(name)} stroke={palette.surface} strokeWidth="2" />
       <text
         x={x}
         y={y}
         textAnchor="middle"
         dominantBaseline="central"
         fill={palette.surface}
-        fontSize="11"
+        fontSize="9.5"
         fontWeight="600"
       >
         {initials(name)}
@@ -126,8 +139,8 @@ function PlayerMark({ player, x, y }: { player: CourtSide[number]; x: number; y:
       {tier && (
         <>
           <rect
-            x={x + 2}
-            y={y + 5}
+            x={x + 1}
+            y={y + 4}
             width="18"
             height="10"
             rx="5"
@@ -136,8 +149,8 @@ function PlayerMark({ player, x, y }: { player: CourtSide[number]; x: number; y:
             strokeWidth="1.5"
           />
           <text
-            x={x + 11}
-            y={y + 10.5}
+            x={x + 10}
+            y={y + 9.5}
             textAnchor="middle"
             dominantBaseline="central"
             fill={palette.accent}
@@ -148,22 +161,11 @@ function PlayerMark({ player, x, y }: { player: CourtSide[number]; x: number; y:
           </text>
         </>
       )}
-      <text
-        x={x}
-        y={y + 26}
-        textAnchor="middle"
-        fill={palette.ink}
-        fontSize="9"
-        fontWeight="600"
-      >
-        {truncate(name)}
-      </text>
     </g>
   )
 }
 
-/** First name only, and clipped — the diagram is glanced at, not read. */
-function truncate(name: string): string {
-  const first = name.trim().split(/\s+/)[0] ?? name
-  return first.length > 10 ? `${first.slice(0, 9)}…` : first
+/** "Ana & Ben" — first names only, because the diagram is glanced at, not read. */
+function firstNames(side: CourtSide): string {
+  return side.map((p) => p.name.trim().split(/\s+/)[0] || p.name).join(' & ')
 }

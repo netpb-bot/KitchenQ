@@ -141,6 +141,22 @@ export function money(amount: number, currency: string): string {
   return new Intl.NumberFormat(undefined, { style: 'currency', currency }).format(amount)
 }
 
+/**
+ * Wall-clock length of a session, as "1h 45m". Em dash if it never started.
+ * Counts up to now while the session is still running, which is what both the
+ * recap and Home's live bar want.
+ */
+export function duration(session: Session): string {
+  if (!session.started_at) return '—'
+  const end = session.ended_at ? new Date(session.ended_at) : new Date()
+  const minutes = Math.max(
+    0,
+    Math.round((end.getTime() - new Date(session.started_at).getTime()) / 60000),
+  )
+  const hours = Math.floor(minutes / 60)
+  return hours > 0 ? `${hours}h ${minutes % 60}m` : `${minutes}m`
+}
+
 /* ------------------------------------------------------------------ members */
 
 const MEMBER_COLS = 'id, club_id, user_id, display_name, skill_tier, role'
@@ -336,6 +352,16 @@ export async function reopenSession(sessionId: string): Promise<void> {
   ok(await supabase.from('sessions').update({ status: 'live', ended_at: null }).eq('id', sessionId))
 }
 
+/**
+ * The fee is a guess when the session is created and the truth once someone is
+ * holding cash. A change re-prices every unpaid line through the trigger in
+ * 0007; lines with money already recorded against them keep what was collected.
+ */
+export async function setSessionFee(sessionId: string, amount: number): Promise<void> {
+  const fee = Math.max(0, Math.round(amount * 100) / 100)
+  ok(await supabase.from('sessions').update({ fee_amount: fee }).eq('id', sessionId))
+}
+
 /** Session toggle: let the players on court record their own score. */
 export async function setPlayerScoring(sessionId: string, allow: boolean): Promise<void> {
   ok(await supabase.from('sessions').update({ allow_player_scoring: allow }).eq('id', sessionId))
@@ -503,6 +529,29 @@ export async function listLedger(sessionId: string): Promise<LedgerEntry[]> {
 /** What the host actually took. `status` is derived by the database. */
 export async function recordPayment(entryId: string, amountPaid: number): Promise<void> {
   ok(await supabase.from('ledger_entries').update({ amount_paid: amountPaid }).eq('id', entryId))
+}
+
+/**
+ * Several lines as one user action — settling the room at the end of the night,
+ * or putting all of it back when the host undoes that.
+ */
+export async function recordPayments(
+  updates: { id: string; amount: number }[],
+): Promise<void> {
+  // ponytail: one request per line, and a line is a player. Batch into an RPC
+  // only if a thirty-player session measurably drags.
+  await Promise.all(updates.map((u) => recordPayment(u.id, u.amount)))
+}
+
+/**
+ * The lines a "settle everyone" sweep should touch: anyone still short, partial
+ * payments included — a half-paid line is exactly the one the host is chasing.
+ * Returns what to write, so the caller can capture the amounts it replaces.
+ */
+export function unsettled(rows: LedgerEntry[]): { id: string; amount: number }[] {
+  return rows
+    .filter((e) => e.amount_paid < e.amount_due)
+    .map((e) => ({ id: e.id, amount: e.amount_due }))
 }
 
 /**

@@ -3,6 +3,7 @@ import type { ErrorInfo, ReactNode } from 'react'
 import {
   BrowserRouter,
   Link,
+  Navigate,
   Outlet,
   Route,
   Routes,
@@ -18,12 +19,7 @@ import { Clubs } from './routes/Clubs'
 import { ClubDetail } from './routes/ClubDetail'
 import { Join } from './routes/Join'
 import { Profile } from './routes/Profile'
-import {
-  SessionFees,
-  SessionHistory,
-  SessionLive,
-  SessionRanks,
-} from './routes/SessionScreens'
+import { SessionFees, SessionLive, SessionStandings } from './routes/SessionScreens'
 
 export default function App() {
   if (!isConfigured) return <SetupNeeded />
@@ -50,12 +46,16 @@ function Router() {
           <Route path="/profile" element={<Profile />} />
         </Route>
 
-        {/* Session level — owns the screen, with its own tab bar. */}
+        {/* Session level — owns the screen, with its own tab bar. Fees has no
+            tab: it is reached from the session header. */}
         <Route path="/session/:sessionId" element={<SessionLayout />}>
           <Route index element={<SessionLive />} />
-          <Route path="ranks" element={<SessionRanks />} />
-          <Route path="history" element={<SessionHistory />} />
+          <Route path="standings" element={<SessionStandings />} />
           <Route path="fees" element={<SessionFees />} />
+          {/* Ranks and History merged into Standings. Session links get shared
+              into group chats, so the old paths redirect rather than 404. */}
+          <Route path="ranks" element={<Navigate to="../standings" replace />} />
+          <Route path="history" element={<Navigate to="../standings" replace />} />
         </Route>
 
         <Route element={<AppLayout />}>
@@ -118,13 +118,13 @@ class ErrorBoundary extends Component<{ children: ReactNode }, { message: string
     if (!this.state.message) return this.props.children
     return (
       <Screen title="Something broke" subtitle="The session itself is safe.">
-        <Card className="border border-danger-tint">
-          <p className="font-semibold text-danger">KitchenQ hit an error and stopped.</p>
-          <p className="mt-2 text-sm leading-relaxed text-muted">
+        <Card className="bg-danger-tint ring-1 ring-danger/20">
+          <p className="text-body font-medium text-danger">KitchenQ hit an error and stopped.</p>
+          <p className="mt-2 text-meta leading-relaxed text-muted">
             Nothing you recorded is lost — scores and payments live on the server, not
             in this screen. Reloading should put you back where you were.
           </p>
-          <p className="mt-3 break-words text-xs text-muted">{this.state.message}</p>
+          <p className="mt-3 break-words text-meta text-muted">{this.state.message}</p>
           <div className="mt-4">
             <Button full onClick={() => location.reload()}>
               Reload
@@ -158,9 +158,9 @@ function SessionLayout() {
 function SetupNeeded() {
   return (
     <Screen title="Setup" subtitle="KitchenQ needs a Supabase connection.">
-      <Card className="border border-warn-tint">
-        <p className="font-semibold text-warn">Supabase is not configured.</p>
-        <p className="mt-2 text-sm leading-relaxed text-muted">
+      <Card className="bg-warn-tint ring-1 ring-warn/20">
+        <p className="text-body font-medium text-warn">Supabase is not configured.</p>
+        <p className="mt-2 text-meta leading-relaxed text-muted">
           Copy <span className="font-semibold text-ink">.env.example</span> to{' '}
           <span className="font-semibold text-ink">.env</span>, fill in{' '}
           <span className="font-semibold text-ink">VITE_SUPABASE_URL</span> and{' '}

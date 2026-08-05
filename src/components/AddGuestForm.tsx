@@ -61,7 +61,7 @@ export function AddGuestForm({
           ))}
         </Select>
       </Field>
-      {error && <p className="text-sm font-medium text-danger">{error}</p>}
+      {error && <p className="text-meta font-medium text-danger">{error}</p>}
       <Button type="submit" icon={Plus} full loading={busy} disabled={!name.trim()}>
         {submitLabel}
       </Button>

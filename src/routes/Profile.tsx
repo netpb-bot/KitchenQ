@@ -153,7 +153,7 @@ export function Profile() {
             action={
               <Link
                 to={`/clubs/${me.club_id}`}
-                className="inline-flex min-h-11 items-center gap-1 text-sm font-semibold text-primary"
+                className="inline-flex min-h-11 items-center gap-1 text-meta font-medium text-primary"
               >
                 Standings
                 <ChevronRight size={16} aria-hidden />
@@ -173,7 +173,7 @@ export function Profile() {
             ))}
           </div>
           {mine!.length > RECENT_MATCHES && (
-            <p className="tnum mt-3 text-center text-xs text-muted">
+            <p className="tnum mt-3 text-center text-meta text-muted">
               Showing the last {RECENT_MATCHES} of {mine!.length} matches.
             </p>
           )}
@@ -208,7 +208,7 @@ function ProfileHero({
       <div className="flex items-center gap-4">
         <Avatar name={me.display_name} size="xl" />
         <div className="min-w-0 flex-1">
-          <p className="truncate text-lg font-bold text-white">{me.display_name}</p>
+          <p className="truncate text-title font-semibold text-white">{me.display_name}</p>
           <div className="mt-2 flex flex-wrap items-center gap-1.5">
             <Pill tone="onDark">{TIER_LABEL[me.skill_tier]}</Pill>
             {me.role !== 'member' && (
@@ -220,7 +220,7 @@ function ProfileHero({
             host could rename guests, but never themselves. */}
         {!editing && (
           <Button
-            variant="secondary"
+            variant="ghostOnDark"
             size="sm"
             icon={Pencil}
             className="shrink-0 px-2"
@@ -291,8 +291,8 @@ function SelfEdit({
       }}
     >
       <label className="block">
-        <span className="text-sm font-semibold text-white">Your name</span>
-        <span className="mt-0.5 block text-xs text-white/60">
+        <span className="text-caption font-semibold uppercase text-white/55">Your name</span>
+        <span className="mt-1 block text-meta text-white/55">
           Shown on the queue, the courts and the standings.
         </span>
         <Input
@@ -305,7 +305,7 @@ function SelfEdit({
         />
       </label>
       <label className="block">
-        <span className="text-sm font-semibold text-white">Skill level</span>
+        <span className="text-caption font-semibold uppercase text-white/55">Skill level</span>
         <Select
           value={tier}
           onChange={(e) => setTier(e.target.value as Tier)}
@@ -319,7 +319,7 @@ function SelfEdit({
         </Select>
       </label>
       {error && (
-        <p role="alert" className="text-sm font-medium text-accent">
+        <p role="alert" className="text-meta font-medium text-danger-on-dark">
           {error}
         </p>
       )}
@@ -327,7 +327,7 @@ function SelfEdit({
         <Button type="submit" variant="brand" full loading={busy} disabled={!dirty || !name.trim()}>
           Save
         </Button>
-        <Button type="button" variant="ghost" className="text-white/70" onClick={onDone}>
+        <Button type="button" variant="ghostOnDark" onClick={onDone}>
           Cancel
         </Button>
       </div>
@@ -351,15 +351,17 @@ function PlayedMatch({
       <Card>
         <div className="flex items-center justify-between gap-2">
           <div className="min-w-0">
-            <p className="truncate text-xs font-semibold text-muted">{sessionName}</p>
-            <p className="tnum mt-0.5 text-xs text-muted">
+            <p className="truncate text-caption font-semibold uppercase text-muted">{sessionName}</p>
+            <p className="tnum mt-0.5 text-meta text-muted">
               {new Date(match.ended_at!).toLocaleDateString(undefined, {
                 month: 'short',
                 day: 'numeric',
               })}
             </p>
           </div>
-          <Pill tone={played.won ? 'neutral' : 'warn'}>{played.won ? 'Won' : 'Lost'}</Pill>
+          {/* A loss is finished, not outstanding — amber said it still needed
+              doing something about. */}
+          <Pill tone={played.won ? 'good' : 'neutral'}>{played.won ? 'Won' : 'Lost'}</Pill>
         </div>
         <div className="mt-2">
           <MatchResult
