@@ -1,5 +1,13 @@
 import { describe, expect, it } from 'vitest'
-import { pickNextMatch, queueOrder, type PastMatch, type QueuePlayer } from './queue'
+import {
+  courtFreeAt,
+  forecast,
+  pickNextMatch,
+  queueOrder,
+  typicalMatchMs,
+  type PastMatch,
+  type QueuePlayer,
+} from './queue'
 import type { Tier } from './db'
 
 function player(
@@ -152,5 +160,99 @@ describe('queueOrder', () => {
       player('b', { gamesPlayed: 0, queuedAt: 10 }),
     ]).map((p) => p.memberId)
     expect(order).toEqual(['b', 'a', 'c'])
+  })
+})
+
+const MIN = 60_000
+
+describe('typicalMatchMs', () => {
+  function match(startMin: number, endMin: number | null) {
+    return {
+      started_at: new Date(startMin * MIN).toISOString(),
+      ended_at: endMin === null ? null : new Date(endMin * MIN).toISOString(),
+    }
+  }
+
+  it('falls back to a default before the night has finished a match', () => {
+    expect(typicalMatchMs([])).toBe(12 * MIN)
+    expect(typicalMatchMs([match(0, null)])).toBe(12 * MIN)
+  })
+
+  // The reason this is a median: a match somebody forgot to score sat "running"
+  // for two hours, and a mean would have put every estimate on screen at 40min.
+  it('ignores the outlier a mean would swallow', () => {
+    const matches = [match(0, 10), match(20, 31), match(40, 52), match(60, 180)]
+    expect(typicalMatchMs(matches)).toBe(11.5 * MIN)
+  })
+
+  it('takes the middle value of an odd number of matches', () => {
+    expect(typicalMatchMs([match(0, 8), match(10, 30), match(40, 52)])).toBe(12 * MIN)
+  })
+})
+
+describe('courtFreeAt', () => {
+  it('estimates one typical match from the start', () => {
+    expect(courtFreeAt(1000, 10 * MIN, 1000)).toBe(1000 + 10 * MIN)
+  })
+
+  // A game gone to 15-13 must not report "~0 min" for the rest of its life.
+  it('never reports a running match as already over', () => {
+    const now = 100 * MIN
+    expect(courtFreeAt(0, 10 * MIN, now)).toBe(now + MIN)
+  })
+})
+
+describe('forecast', () => {
+  const NOW = 1_000_000
+  const courts = (...freeAt: number[]) =>
+    freeAt.map((at, i) => ({ court: i + 1, freeAt: at }))
+
+  it('fills every court with a different four', () => {
+    const { courts: up } = forecast(roster(8), courts(NOW, NOW), [], 10 * MIN)
+    expect(up).toHaveLength(2)
+    const picked = [...everyone(up[0].lineup), ...everyone(up[1].lineup)]
+    expect(new Set(picked).size).toBe(8)
+  })
+
+  it('says nothing at all below four waiting', () => {
+    const { courts: up, onCourtAt } = forecast(roster(3), courts(NOW), [], 10 * MIN)
+    expect(up).toEqual([])
+    expect(onCourtAt.size).toBe(0)
+  })
+
+  it('stops at the last court it can fill', () => {
+    const { courts: up } = forecast(roster(7), courts(NOW, NOW), [], 10 * MIN)
+    expect(up).toHaveLength(1)
+  })
+
+  // The court freeing first gets first pick, whatever its number — otherwise
+  // court 1's forecast holds back players who could be on court 2 sooner.
+  it('gives the soonest-free court first pick of the queue', () => {
+    const { courts: up } = forecast(roster(8), courts(NOW + 20 * MIN, NOW), [], 10 * MIN)
+    expect(up[0].court).toBe(2)
+    expect(up[0].freeAt).toBe(NOW)
+    // p0..p3 waited longest, so they belong to the court that frees first.
+    expect(everyone(up[0].lineup).sort()).toEqual(['p0', 'p1', 'p2', 'p3'])
+  })
+
+  it('puts a forecast player on court when their court frees', () => {
+    const { onCourtAt } = forecast(roster(4), courts(NOW + 6 * MIN), [], 10 * MIN)
+    expect(onCourtAt.get('p0')).toBe(NOW + 6 * MIN)
+  })
+
+  // The whole point of the leftover estimate: the 5th player is not "waiting
+  // for the court to free", they are waiting for the court to free *and* for a
+  // full match to be played on it.
+  it('puts everyone else a full round behind', () => {
+    const { onCourtAt } = forecast(roster(9), courts(NOW), [], 10 * MIN)
+    expect(onCourtAt.get('p4')).toBe(NOW + 10 * MIN)
+    expect(onCourtAt.get('p7')).toBe(NOW + 10 * MIN)
+    // Ninth in line is two rounds out on a single court.
+    expect(onCourtAt.get('p8')).toBe(NOW + 20 * MIN)
+  })
+
+  it('gives every waiting player an estimate', () => {
+    const { onCourtAt } = forecast(roster(11), courts(NOW, NOW), [], 10 * MIN)
+    expect(onCourtAt.size).toBe(11)
   })
 })

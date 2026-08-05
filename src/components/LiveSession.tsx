@@ -26,7 +26,15 @@ import {
   type SessionStatus,
   type Tier,
 } from '../lib/db'
-import { pickNextMatch, queueOrder, type Lineup, type QueuePlayer } from '../lib/queue'
+import {
+  courtFreeAt,
+  forecast,
+  queueOrder,
+  typicalMatchMs,
+  type Lineup,
+  type QueuePlayer,
+  type Upcoming,
+} from '../lib/queue'
 import { AddGuestForm } from './AddGuestForm'
 import { isUnreachable } from './ConnectionBanner'
 import { Avatar, TierBadge } from './Avatar'
@@ -95,26 +103,51 @@ export function LiveSession({
   const live = useMemo(() => matches.filter((m) => !m.ended_at), [matches])
   const finished = useMemo(() => matches.filter((m) => m.ended_at), [matches])
 
-  // Empty courts are filled in order, each suggestion excluding the players the
-  // previous suggestion already claimed — otherwise two free courts propose the
+  // Minutes, not seconds — this drives wait estimates, which are rounded to the
+  // minute and built on a median. A faster tick would only animate noise.
+  const now = useNow(30_000)
+  const typicalMs = useMemo(() => typicalMatchMs(matches), [matches])
+
+  // Who plays next on every court, free or not, each lineup excluding the
+  // players an earlier one already claimed — otherwise two courts propose the
   // same four people.
   //
-  // Memoised because each open court enumerates a few hundred candidate
-  // lineups, and the match timers re-render this component every second.
-  const suggestions = useMemo(() => {
-    const out = new Map<number, Lineup>()
-    const claimed = new Set<string>()
+  // Memoised because each court enumerates a few hundred candidate lineups.
+  const plan = useMemo(() => {
     const history = finished.map((m) => ({ teamA: m.team_a_ids, teamB: m.team_b_ids }))
-    for (let court = 1; court <= session.court_count; court++) {
-      if (live.some((m) => m.court_number === court)) continue
-      const available = waiting.filter((p) => !claimed.has(p.memberId))
-      const lineup = pickNextMatch(available, history)
-      if (!lineup) break
-      out.set(court, lineup)
-      ;[...lineup.teamA, ...lineup.teamB].forEach((id) => claimed.add(id))
+    const courts = Array.from({ length: session.court_count }, (_, i) => {
+      const match = live.find((m) => m.court_number === i + 1)
+      return {
+        court: i + 1,
+        freeAt: match
+          ? courtFreeAt(new Date(match.started_at).getTime(), typicalMs, now)
+          : now,
+      }
+    })
+    return forecast(waiting, courts, history, typicalMs)
+  }, [session.court_count, live, finished, waiting, typicalMs, now])
+
+  // A forecast for a court that is still playing is a guess; only a court
+  // standing empty gets to offer a startable lineup.
+  const suggestions = useMemo(
+    () =>
+      new Map(
+        plan.courts.filter((c) => c.freeAt <= now).map((c) => [c.court, c.lineup]),
+      ),
+    [plan, now],
+  )
+
+  // "You're 3rd" is the answer to a question nobody actually asked; "you're on
+  // in about ten minutes" is. One label per waiting player, keyed by member id.
+  const waits = useMemo(() => {
+    const out = new Map<string, string>()
+    for (const [id, at] of plan.onCourtAt) out.set(id, waitLabel(at, now))
+    for (const court of plan.courts) {
+      if (court.freeAt > now) continue
+      for (const id of everyone(court.lineup)) out.set(id, 'up next')
     }
     return out
-  }, [session.court_count, live, finished, waiting])
+  }, [plan, now])
 
   // "Where am I in the queue" is the only question most players open this screen
   // to answer, and it used to sit below every court card — four large cards of
@@ -123,6 +156,9 @@ export function LiveSession({
   const myPosition = mine
     ? queueOrder(waiting).findIndex((e) => e.memberId === mine.club_members.id) + 1
     : 0
+  const myNext = me
+    ? (plan.courts.find((c) => everyone(c.lineup).includes(me.id)) ?? null)
+    : null
 
   return (
     <>
@@ -131,6 +167,10 @@ export function LiveSession({
           player={mine}
           position={myPosition}
           status={session.status}
+          upNext={myNext}
+          onCourtAt={(me && plan.onCourtAt.get(me.id)) ?? null}
+          now={now}
+          names={names}
           reload={reload}
         />
       )}
@@ -149,6 +189,9 @@ export function LiveSession({
               tiers={tiers}
               session={session}
               admin={admin}
+              upNext={plan.courts.find((c) => c.court === court) ?? null}
+              waiting={waiting}
+              now={now}
               reload={reload}
             />
           ) : (
@@ -171,6 +214,7 @@ export function LiveSession({
         me={me}
         admin={admin}
         adding={adding}
+        waits={waits}
         onToggleAdd={() => setAdding((open) => !open)}
         reload={reload}
       />
@@ -194,9 +238,47 @@ function claimedByOtherCourts(
   const claimed = new Set<string>()
   for (const [other, lineup] of suggestions) {
     if (other === court) continue
-    for (const id of [...lineup.teamA, ...lineup.teamB]) claimed.add(id)
+    for (const id of everyone(lineup)) claimed.add(id)
   }
   return claimed
+}
+
+function everyone(lineup: Lineup): string[] {
+  return [...lineup.teamA, ...lineup.teamB]
+}
+
+/**
+ * A clock for wait estimates, ticking far slower than `MatchTimer`.
+ *
+ * Held by the components that print minutes rather than by the ones that draw
+ * courts, for the reason spelled out on MatchTimer: a tick is a state change,
+ * and state changes redraw whoever owns them.
+ */
+function useNow(intervalMs: number): number {
+  const [now, setNow] = useState(() => Date.now())
+  useEffect(() => {
+    const id = setInterval(() => setNow(Date.now()), intervalMs)
+    return () => clearInterval(id)
+  }, [intervalMs])
+  return now
+}
+
+/**
+ * A wait, in the roundest terms the estimate can honestly support. It is a
+ * median match length divided by courts — printing "7 min" would claim a
+ * precision that isn't there, and a player who waits nine feels lied to.
+ */
+export function waitLabel(freeAt: number, now: number): string {
+  const minutes = Math.round((freeAt - now) / 60_000)
+  return minutes < 2 ? 'any minute' : `~${minutes} min`
+}
+
+/** Your partner and who you're up against, from your own side of the net. */
+export function matchup(lineup: Lineup, meId: string, names: Map<string, string>): string {
+  const withMe = lineup.teamA.includes(meId) ? lineup.teamA : lineup.teamB
+  const against = lineup.teamA.includes(meId) ? lineup.teamB : lineup.teamA
+  const named = (id: string | undefined) => (id && names.get(id)) || 'a guest'
+  return `with ${named(withMe.find((id) => id !== meId))} vs ${named(against[0])} & ${named(against[1])}`
 }
 
 /**
@@ -268,6 +350,9 @@ function LiveCourt({
   tiers,
   session,
   admin,
+  upNext,
+  waiting,
+  now,
   reload,
 }: {
   match: Match
@@ -275,12 +360,17 @@ function LiveCourt({
   tiers: Map<string, Tier>
   session: Session
   admin: boolean
+  /** Who is forecast onto this court once this match ends. */
+  upNext: Upcoming | null
+  waiting: QueuePlayer[]
+  now: number
   reload: () => void
 }) {
   const [scoring, setScoring] = useState(false)
   const onCourt = (id: string) => ({ name: names.get(id) ?? 'Unknown', tier: tiers.get(id) })
   // The host always scores; players only when the session says they may.
   const canScore = admin || session.allow_player_scoring
+  const byId = new Map(waiting.map((p) => [p.memberId, p]))
 
   return (
     <Card className="ring-2 ring-brand/50">
@@ -321,6 +411,23 @@ function LiveCourt({
             )}
           </>
         ))}
+
+      {/* On the court card rather than in a section of its own: it is the only
+          place the four names reach a guest, who has no phone and never sees
+          SelfStatus. Hidden while scoring — that card is a keypad, not a
+          notice board. */}
+      {upNext && !scoring && (
+        <div className="mt-4 border-t border-hairline pt-3">
+          <p className="text-caption font-semibold uppercase text-muted">
+            Up next here · {waitLabel(upNext.freeAt, now)}
+          </p>
+          <div className="mt-2 grid grid-cols-[1fr_auto_1fr] items-center gap-2">
+            <TeamSlots ids={upNext.lineup.teamA} offset={0} byId={byId} slot={null} locked />
+            <span className="text-caption font-semibold uppercase text-muted">vs</span>
+            <TeamSlots ids={upNext.lineup.teamB} offset={2} byId={byId} slot={null} locked />
+          </div>
+        </div>
+      )}
     </Card>
   )
 }
@@ -361,6 +468,11 @@ export type CourtState = 'ready' | 'locked' | 'open'
  * `locked` still shows the lineup, because seeing who is up next is exactly what
  * a host checks before starting the night. An ended session gets `open` instead
  * — a suggested match for a night that is over is noise.
+ *
+ * A live session shows the lineup to *everyone*: it used to be host-only, so a
+ * player waiting on a free court read "Waiting on the next match" while the
+ * host was looking at their name in the lineup. Only the host gets `ready`,
+ * which is the state that carries Start and Swap.
  */
 export function courtState(
   status: SessionStatus,
@@ -368,7 +480,8 @@ export function courtState(
   hasLineup: boolean,
 ): CourtState {
   if (status !== 'live') return status === 'draft' && admin && hasLineup ? 'locked' : 'open'
-  return admin && hasLineup ? 'ready' : 'open'
+  if (!hasLineup) return 'open'
+  return admin ? 'ready' : 'locked'
 }
 
 /**
@@ -467,12 +580,17 @@ function OpenCourt({
   // Same card, same lineup, same geometry as the live version — so starting the
   // session changes the pills and reveals the buttons without the courts jumping
   // under the host's thumb.
+  // Two ways to be shown a lineup you cannot start: the night hasn't begun, or
+  // you aren't the host. Same card, and the pill and footer say which.
   if (state === 'locked') {
+    const notStarted = session.status === 'draft'
     return (
       <Card>
         <div className="flex items-center justify-between gap-3">
           <CourtLabel court={court} />
-          <Pill tone="warn">Not started</Pill>
+          <Pill tone={notStarted ? 'warn' : 'neutral'}>
+            {notStarted ? 'Not started' : 'Next up'}
+          </Pill>
         </div>
         {/* Not dimmed: the names are the reason to show this card at all, and
             60% opacity puts them under AA. The pill, the missing buttons and the
@@ -483,7 +601,9 @@ function OpenCourt({
           <TeamSlots ids={lineup!.slice(2, 4)} offset={2} byId={byId} slot={null} locked />
         </div>
         <p className="mt-3 text-center text-meta text-muted">
-          Tap Start session at the top to put this match on court.
+          {notStarted
+            ? 'Tap Start session at the top to put this match on court.'
+            : 'Starting as soon as the host taps go.'}
         </p>
       </Card>
     )
@@ -635,6 +755,7 @@ function Queue({
   me,
   admin,
   adding,
+  waits,
   onToggleAdd,
   reload,
 }: {
@@ -642,6 +763,8 @@ function Queue({
   me: Member | null
   admin: boolean
   adding: boolean
+  /** Wait label per club_members.id. Missing = nothing worth guessing. */
+  waits: Map<string, string>
   onToggleAdd: () => void
   reload: () => void
 }) {
@@ -709,6 +832,7 @@ function Queue({
                 position={index + 1}
                 isMe={player.club_members.id === me?.id}
                 admin={admin}
+                wait={waits.get(player.club_members.id)}
                 onRemoved={setRemoved}
                 reload={reload}
               />
@@ -769,11 +893,21 @@ function SelfStatus({
   player,
   position,
   status,
+  upNext,
+  onCourtAt,
+  now,
+  names,
   reload,
 }: {
   player: SessionPlayer
   position: number
   status: SessionStatus
+  /** The forecast lineup you're in, if any. */
+  upNext: Upcoming | null
+  /** Epoch ms you're expected on court, when there's enough to guess from. */
+  onCourtAt: number | null
+  now: number
+  names: Map<string, string>
   reload: () => void
 }) {
   const [busy, error, run] = useAction()
@@ -788,6 +922,11 @@ function SelfStatus({
   // wanting the first round is a real thing to say.
   const over = status === 'ended'
   const waiting = player.status === 'waiting' && !over
+  const live = waiting && status === 'live'
+  // A court already standing empty is a promise; one still being played on is a
+  // forecast, and the wording is the only thing separating them.
+  const called = live && upNext !== null && upNext.freeAt <= now
+
   const label = over
     ? 'This session has ended.'
     : player.status === 'playing'
@@ -796,11 +935,22 @@ function SelfStatus({
         ? "You're sitting out"
         : status === 'draft'
           ? "You're in — the host hasn't started yet"
-          : `You're ${ordinal(position)} in the queue`
+          : called
+            ? `You're up · Court ${upNext!.court}`
+            : upNext
+              ? `You're next on Court ${upNext.court} · ${waitLabel(upNext.freeAt, now)}`
+              : `You're ${ordinal(position)} in the queue${
+                  onCourtAt === null ? '' : ` · ${waitLabel(onCourtAt, now)}`
+                }`
 
   return (
     <div className="mt-4 rounded-card bg-tint px-4 py-3 ring-1 ring-primary/12">
       <div className="flex flex-wrap items-center gap-x-3 gap-y-2">
+        {called && (
+          <Pill tone="live" dot>
+            Up next
+          </Pill>
+        )}
         <p className="min-w-0 flex-1 text-body font-medium text-primary">{label}</p>
         {waiting && (
           <Button variant="ghost" size="sm" loading={busy} onClick={() => move('resting')}>
@@ -823,6 +973,12 @@ function SelfStatus({
           </>
         )}
       </div>
+      {/* The part people were opening the app to guess at. */}
+      {live && upNext && (
+        <p className="mt-1 text-meta text-primary/75">
+          {matchup(upNext.lineup, player.club_members.id, names)}
+        </p>
+      )}
       {error && <p className="mt-1 text-meta font-medium text-danger">{error}</p>}
     </div>
   )
@@ -838,6 +994,7 @@ function PlayerRow({
   position,
   isMe,
   admin,
+  wait,
   onRemoved,
   reload,
 }: {
@@ -845,6 +1002,8 @@ function PlayerRow({
   position?: number
   isMe: boolean
   admin: boolean
+  /** "up next" or "~9 min". Absent for anyone not waiting on a court. */
+  wait?: string
   onRemoved: (removed: { id: string; name: string }) => void
   reload: () => void
 }) {
@@ -865,6 +1024,7 @@ function PlayerRow({
         <p className="tnum mt-0.5 text-meta text-muted">
           {player.games_played} {player.games_played === 1 ? 'game' : 'games'} ·{' '}
           {TIER_LABEL[player.club_members.skill_tier]}
+          {wait && <span className="font-medium text-primary"> · {wait}</span>}
         </p>
       </div>
 
@@ -983,11 +1143,35 @@ function AddPlayer({
       </p>
       <AddGuestForm
         clubId={data.session.club_id}
+        // The whole club, not `absent` — the people already on tonight's queue
+        // are the ones most likely to get typed in a second time.
+        taken={data.clubMembers}
         submitLabel="Add to queue"
         onAdded={async (guest) => {
           await addPlayer(data.session.id, guest.id)
           reload()
         }}
+        // A name clash here almost always means the host wants that person on
+        // the queue, not a new record — so offer the thing they came to do.
+        onDuplicate={(existing) =>
+          inSession.has(existing.id) ? (
+            <p className="text-meta text-muted">They're already in tonight's session.</p>
+          ) : (
+            <Button
+              variant="secondary"
+              icon={Plus}
+              disabled={busy}
+              onClick={() =>
+                run(async () => {
+                  await addPlayer(data.session.id, existing.id)
+                  reload()
+                })
+              }
+            >
+              Add {existing.display_name} to the queue
+            </Button>
+          )
+        }
       />
       <Button variant="ghost" full className="mt-2" onClick={onDone}>
         Done adding

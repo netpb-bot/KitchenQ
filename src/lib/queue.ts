@@ -117,6 +117,117 @@ export function pickNextMatch(
   return best
 }
 
+/* ----------------------------------------------------------------- forecast */
+
+/** Until the night has a finished match to measure, assume a rec-doubles game. */
+const DEFAULT_MATCH_MS = 12 * 60 * 1000
+
+/**
+ * The soonest a running match is ever reported as ending. A game that overruns
+ * would otherwise sit at "~0 min" for the rest of its life, which reads as a
+ * broken clock rather than a long rally.
+ */
+const MIN_REMAINING_MS = 60 * 1000
+
+/** A court and when it comes free. Epoch ms; a court free right now is `now`. */
+export type CourtSlot = { court: number; freeAt: number }
+
+export type Upcoming = { court: number; lineup: Lineup; freeAt: number }
+
+export type Forecast = {
+  /** Next lineup per court, soonest-free first. Courts that can't fill are omitted. */
+  courts: Upcoming[]
+  /** Epoch ms each waiting player is expected on court. Absent = no idea yet. */
+  onCourtAt: Map<string, number>
+}
+
+/**
+ * How long a match takes tonight, for wait estimates.
+ *
+ * Median, not mean: one match left running while everyone went to dinner would
+ * drag an average far enough to make every estimate on the screen wrong.
+ */
+export function typicalMatchMs(
+  matches: { started_at: string; ended_at: string | null }[],
+): number {
+  const lengths = matches
+    .filter((m) => m.ended_at)
+    .map((m) => new Date(m.ended_at!).getTime() - new Date(m.started_at).getTime())
+    .filter((ms) => ms > 0)
+    .sort((a, b) => a - b)
+
+  if (lengths.length === 0) return DEFAULT_MATCH_MS
+  const mid = Math.floor(lengths.length / 2)
+  return lengths.length % 2 === 1 ? lengths[mid] : (lengths[mid - 1] + lengths[mid]) / 2
+}
+
+/**
+ * When a running match frees its court.
+ *
+ * ponytail: elapsed time is the only signal there is — scores are entered when
+ * a match ends, so nothing here knows a game is at 10-10. If live scoring ever
+ * lands, weight this by points remaining.
+ */
+export function courtFreeAt(startedAt: number, typicalMs: number, now: number): number {
+  return Math.max(startedAt + typicalMs, now + MIN_REMAINING_MS)
+}
+
+/**
+ * Who plays next on each court, and roughly when everyone else gets on.
+ *
+ * The same walk the host's open courts already did — pick, claim the four,
+ * move on so two courts never propose the same person — extended to courts
+ * that are still playing, so a waiting player can be told their match before
+ * the court is free.
+ *
+ * Only one round deep on purpose. A player arriving mid-session has no games
+ * yet, so `queueOrder` puts them at the *front*; anything past the current
+ * round gets reshuffled by every walk-in and would visibly churn.
+ */
+export function forecast(
+  waiting: QueuePlayer[],
+  courts: CourtSlot[],
+  history: PastMatch[],
+  typicalMs: number,
+): Forecast {
+  const claimed = new Set<string>()
+  const upcoming: Upcoming[] = []
+  const onCourtAt = new Map<string, number>()
+
+  // Stable sort, so courts freeing at the same moment keep their numbering.
+  for (const slot of [...courts].sort((a, b) => a.freeAt - b.freeAt)) {
+    const lineup = pickNextMatch(
+      waiting.filter((p) => !claimed.has(p.memberId)),
+      history,
+    )
+    if (!lineup) break
+
+    upcoming.push({ court: slot.court, lineup, freeAt: slot.freeAt })
+    for (const id of [...lineup.teamA, ...lineup.teamB]) {
+      claimed.add(id)
+      onCourtAt.set(id, slot.freeAt)
+    }
+  }
+
+  // Nobody is playing anywhere, so there is no clock to estimate against.
+  if (upcoming.length === 0) return { courts: [], onCourtAt }
+
+  // Everyone left is at least a full round behind: a court has to come free,
+  // play one of the matches above, and come free again.
+  //
+  // ponytail: assumes every court turns over at the same rate. Coarse enough
+  // that the UI rounds it to minutes anyway.
+  const soonest = upcoming[0].freeAt
+  const perRound = 4 * courts.length
+  queueOrder(waiting)
+    .filter((p) => !claimed.has(p.memberId))
+    .forEach((p, rank) => {
+      onCourtAt.set(p.memberId, soonest + typicalMs * (Math.floor(rank / perRound) + 1))
+    })
+
+  return { courts: upcoming, onCourtAt }
+}
+
 /* ------------------------------------------------------------------ scoring */
 
 function lineupCost(
