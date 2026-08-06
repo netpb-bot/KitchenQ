@@ -6,6 +6,7 @@ import {
   Pencil,
   Plus,
   ShieldCheck,
+  Trash2,
   Trophy,
   Users,
   X,
@@ -14,6 +15,7 @@ import {
   TIERS,
   TIER_LABEL,
   createSession,
+  deleteClub,
   getClub,
   isAdmin,
   isGuest,
@@ -24,8 +26,12 @@ import {
   money,
   myMember,
   nameTaken,
+  normalizeName,
+  renameClub,
   updateMember,
+  useAction,
   useAsync,
+  type Club,
   type LedgerEntry,
   type Member,
   type Role,
@@ -136,7 +142,14 @@ export function ClubDetail() {
       )}
       {active === 'dues' && <DuesTab rows={dues} currency={club.currency} admin={admin} />}
       {active === 'members' && (
-        <MembersTab clubId={id} members={members} me={me} admin={admin} reload={reload} />
+        <MembersTab
+          club={club}
+          sessionCount={sessions.length}
+          members={members}
+          me={me}
+          admin={admin}
+          reload={reload}
+        />
       )}
     </Screen>
   )
@@ -347,18 +360,21 @@ function DuesTab({
 }
 
 function MembersTab({
-  clubId,
+  club,
+  sessionCount,
   members,
   me,
   admin,
   reload,
 }: {
-  clubId: string
+  club: Club
+  sessionCount: number
   members: Member[]
   me: Member | null
   admin: boolean
   reload: () => void
 }) {
+  const clubId = club.id
   const [query, setQuery] = useState('')
   const q = query.trim().toLowerCase()
   // No cap here: this is the roster, and search — not a "show all" button — is
@@ -414,9 +430,167 @@ function MembersTab({
               submitLabel="Add guest"
             />
           </Card>
+
+          {/* Last on the tab, deliberately: the destructive control should not
+              sit above the things a host uses every week. */}
+          <SectionHeading>Club settings</SectionHeading>
+          <Card className="space-y-3">
+            <RenameClub club={club} reload={reload} />
+            {/* Owner only, matching clubs_delete in 0003 — a co-host tapping
+                this would be refused by RLS anyway, so it is not rendered. */}
+            {me?.role === 'owner' && (
+              <div className="border-t border-hairline pt-3">
+                <DeleteClub club={club} sessionCount={sessionCount} />
+              </div>
+            )}
+          </Card>
         </>
       )}
     </>
+  )
+}
+
+function RenameClub({ club, reload }: { club: Club; reload: () => void }) {
+  const [open, setOpen] = useState(false)
+  const [name, setName] = useState(club.name)
+  const [busy, error, run] = useAction()
+
+  if (!open)
+    return (
+      <div className="flex items-center justify-between gap-3">
+        <div className="min-w-0">
+          <p className="text-caption font-semibold uppercase text-muted">Club name</p>
+          <p className="mt-0.5 truncate text-body font-semibold text-ink">{club.name}</p>
+        </div>
+        <Button
+          variant="ghost"
+          icon={Pencil}
+          className="shrink-0 px-2"
+          aria-label="Rename club"
+          onClick={() => {
+            setName(club.name)
+            setOpen(true)
+          }}
+        />
+      </div>
+    )
+
+  return (
+    <form
+      className="kq-rise space-y-3"
+      onSubmit={(e) => {
+        e.preventDefault()
+        run(async () => {
+          await renameClub(club.id, name)
+          reload()
+          setOpen(false)
+        })
+      }}
+    >
+      {/* The slug keeps its original wording. Nothing links by it, so a rename
+          that left it behind is invisible everywhere it could be noticed. */}
+      <Field label="Club name">
+        <Input
+          value={name}
+          onChange={(e) => setName(e.target.value)}
+          autoFocus
+          required
+          maxLength={60}
+        />
+      </Field>
+      {error && (
+        <p role="alert" className="text-meta font-medium text-danger">
+          {error}
+        </p>
+      )}
+      <div className="flex gap-2">
+        <Button type="submit" full loading={busy} disabled={!name.trim()}>
+          Save
+        </Button>
+        <Button type="button" variant="ghost" onClick={() => setOpen(false)} disabled={busy}>
+          Cancel
+        </Button>
+      </div>
+    </form>
+  )
+}
+
+/**
+ * Two taps is the confirmation for ending a session, which is reversible. This
+ * is not: it takes every session, member, match and payment the club has. So it
+ * asks for the club's name to be typed — the one confirmation that cannot be
+ * cleared by a thumb moving faster than the person attached to it.
+ *
+ * Compared with normalizeName, the same trimmed/case-folded comparison the
+ * database uses for member names: someone who types their own club's name
+ * correctly should not be blocked by a capital letter or a trailing space.
+ */
+function DeleteClub({ club, sessionCount }: { club: Club; sessionCount: number }) {
+  const navigate = useNavigate()
+  const [open, setOpen] = useState(false)
+  const [typed, setTyped] = useState('')
+  const [busy, error, run] = useAction()
+
+  if (!open)
+    return (
+      <Button variant="dangerQuiet" icon={Trash2} onClick={() => setOpen(true)}>
+        Delete club
+      </Button>
+    )
+
+  return (
+    <form
+      className="kq-rise space-y-3"
+      onSubmit={(e) => {
+        e.preventDefault()
+        run(async () => {
+          await deleteClub(club.id)
+          navigate('/clubs')
+        })
+      }}
+    >
+      <p className="text-meta text-muted">
+        {sessionCount === 0
+          ? 'This club has no sessions yet.'
+          : `This deletes ${sessionCount} ${sessionCount === 1 ? 'session' : 'sessions'} and everything recorded in ${sessionCount === 1 ? 'it' : 'them'} — matches, standings and fees.`}{' '}
+        It cannot be undone.
+      </p>
+      <Field label={`Type “${club.name}” to confirm`}>
+        <Input
+          value={typed}
+          onChange={(e) => setTyped(e.target.value)}
+          autoFocus
+          aria-label={`Type ${club.name} to confirm`}
+        />
+      </Field>
+      {error && (
+        <p role="alert" className="text-meta font-medium text-danger">
+          {error}
+        </p>
+      )}
+      <div className="flex gap-2">
+        <Button
+          type="submit"
+          variant="danger"
+          full
+          loading={busy}
+          disabled={normalizeName(typed) !== normalizeName(club.name)}
+        >
+          Delete club
+        </Button>
+        <Button
+          type="button"
+          variant="ghost"
+          onClick={() => {
+            setTyped('')
+            setOpen(false)
+          }}
+          disabled={busy}
+        >
+          Cancel
+        </Button>
+      </div>
+    </form>
   )
 }
 

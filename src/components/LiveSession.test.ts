@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
-import { canEnterScore, courtState, matchup, waitLabel } from './LiveSession'
-import type { Lineup } from '../lib/queue'
+import { canEnterScore, courtState, matchup, waitLabel, waitLabels } from './LiveSession'
+import type { Forecast, Lineup } from '../lib/queue'
 import type { Match, Session } from '../lib/db'
 
 describe('courtState', () => {
@@ -48,6 +48,56 @@ describe('waitLabel', () => {
     expect(waitLabel(MIN, 0)).toBe('any minute')
     expect(waitLabel(1.4 * MIN, 0)).toBe('any minute')
     expect(waitLabel(-5 * MIN, 0)).toBe('any minute')
+  })
+})
+
+describe('waitLabels', () => {
+  const MIN = 60_000
+  const NOW = 1_000 * MIN
+
+  const plan = (freeAt: number, tail: [string, number][] = []): Forecast => ({
+    courts: [
+      { court: 2, freeAt, lineup: { teamA: ['ana', 'ben'], teamB: ['cara', 'dan'] } },
+    ],
+    onCourtAt: new Map<string, number>([
+      // forecast() stamps every lineup member with their court's own freeAt.
+      ['ana', freeAt],
+      ['ben', freeAt],
+      ['cara', freeAt],
+      ['dan', freeAt],
+      ...tail,
+    ]),
+  })
+
+  // The bug: ending a session leaves its open matches open, so the forecast kept
+  // running and the queue kept telling a room that had gone home they were "up
+  // next". A draft session was the same lie told before the fact.
+  it('says nothing at all unless the session is live', () => {
+    expect(waitLabels(plan(NOW), 'ended', NOW).size).toBe(0)
+    expect(waitLabels(plan(NOW), 'draft', NOW).size).toBe(0)
+  })
+
+  it('promises a court already standing empty, and names it', () => {
+    expect(waitLabels(plan(NOW), 'live', NOW).get('ana')).toEqual({
+      label: 'Up next',
+      called: true,
+      court: 2,
+    })
+  })
+
+  it('only forecasts a court still being played on', () => {
+    expect(waitLabels(plan(NOW + 9 * MIN), 'live', NOW).get('ana')).toEqual({
+      label: '~9 min',
+      called: false,
+      court: 2,
+    })
+  })
+
+  // Past the first round there is a time but no court yet: which one comes free
+  // second is a guess on top of a guess, and naming it would be a promise.
+  it('gives the tail of the queue a time and no court', () => {
+    const waits = waitLabels(plan(NOW, [['eve', NOW + 21 * MIN]]), 'live', NOW)
+    expect(waits.get('eve')).toEqual({ label: '~21 min', called: false })
   })
 })
 

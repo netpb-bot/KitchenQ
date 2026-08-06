@@ -5,7 +5,7 @@
  */
 
 import { useState, type ReactNode } from 'react'
-import { TIER_SHORT, photoOf, type Tier } from '../lib/db'
+import { TIER_LABEL, TIER_SHORT, photoOf, type Tier } from '../lib/db'
 
 // Every swatch here carries white text at >= 4.5:1. Asserted in Avatar.test.ts.
 const SWATCHES = [
@@ -112,19 +112,23 @@ export function Avatar({
  * deliberately: on a queue row the name is what people read, and a full
  * "Intermediate" pill next to every avatar is noise.
  *
- * aria-hidden because the tier is always written out in the row's text — this
- * is a second rendering of it, not a second fact.
+ * This is the only place the tier appears now — the queue row used to write it
+ * out again in its meta line, which made the badge a second rendering of a fact
+ * rather than the fact itself, and it was `aria-hidden` on that basis. The court
+ * diagram and the lineup slots never wrote it out at all, so on those two the
+ * tier simply wasn't there for anyone listening. Hence the full word, off-screen.
  */
 export function TierBadge({ tier }: { tier: Tier }) {
   return (
     <span
-      aria-hidden
       // Sized to sit inside a 32px `sm` avatar: at px-1.5/9px it came out ~34px
       // wide — wider than the circle it rides — and read as a bar across the
       // bottom rather than a corner badge. Ratio now matches CourtDiagram's.
       className="rounded-full bg-surface-darker px-[3px] py-px text-[8px] font-bold leading-[1.4] tracking-tight text-accent ring-[1.5px] ring-surface"
     >
-      {TIER_SHORT[tier]}
+      {/* Absolutely positioned by `sr-only`, so it costs the badge no width. */}
+      <span className="sr-only">{TIER_LABEL[tier]}</span>
+      <span aria-hidden>{TIER_SHORT[tier]}</span>
     </span>
   )
 }

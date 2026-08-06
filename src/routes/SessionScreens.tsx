@@ -20,6 +20,7 @@ import {
   Users,
 } from 'lucide-react'
 import {
+  deleteSession,
   duration,
   getClub,
   getSession,
@@ -32,6 +33,7 @@ import {
   listPairRequests,
   listSessionPlayers,
   myMember,
+  renameSession,
   reopenSession,
   setPlayerScoring,
   setSessionPhoto,
@@ -63,6 +65,7 @@ import {
   EmptyState,
   ErrorNote,
   Eyebrow,
+  Input,
   Loading,
   Pill,
   Screen,
@@ -218,7 +221,7 @@ function FeesLink({ view }: { view: View }) {
 }
 
 function SessionHeader({ view, reload }: { view: View; reload: () => void }) {
-  const { session, me, players, matches } = view
+  const { session, me, players, matches, ledger } = view
   const waiting = players.filter((p) => p.status === 'waiting').length
   const played = matches.filter((m) => m.ended_at).length
   const admin = isAdmin(me)
@@ -308,9 +311,149 @@ function SessionHeader({ view, reload }: { view: View; reload: () => void }) {
           {/* No status check: the group shot gets taken at the end of the
               night, which is after the host has already tapped End session. */}
           <SessionPhotoButton session={session} reload={reload} />
+          <RenameSession session={session} reload={reload} />
+          <DeleteSessionButton session={session} matches={matches} ledger={ledger} />
         </div>
       )}
     </DarkCard>
+  )
+}
+
+/**
+ * The name is the one thing about a session nothing could change. Courts edit on
+ * the Live tab and the fee on Fees, each beside the thing it affects; the name
+ * has no such home, so it edits from the card that shows it.
+ *
+ * Bare Input rather than Field: this is inside a DarkCard and Field's label is
+ * `text-muted` — grey on near-black.
+ */
+function RenameSession({ session, reload }: { session: Session; reload: () => void }) {
+  const [open, setOpen] = useState(false)
+  const [name, setName] = useState(session.name)
+  const [busy, error, run] = useAction()
+
+  if (!open)
+    return (
+      <Button
+        variant="secondaryOnDark"
+        icon={Pencil}
+        full
+        className="mt-3"
+        onClick={() => {
+          // Reopening after a cancel should start from the saved name, not from
+          // whatever half-typed thing was abandoned last time.
+          setName(session.name)
+          setOpen(true)
+        }}
+      >
+        Rename session
+      </Button>
+    )
+
+  return (
+    <form
+      className="kq-rise mt-3 space-y-2"
+      onSubmit={(e) => {
+        e.preventDefault()
+        run(async () => {
+          await renameSession(session.id, name)
+          reload()
+          setOpen(false)
+        })
+      }}
+    >
+      <Input
+        aria-label="Session name"
+        value={name}
+        onChange={(e) => setName(e.target.value)}
+        autoFocus
+        required
+        maxLength={60}
+      />
+      <div className="flex gap-2">
+        <Button type="submit" variant="brand" full loading={busy} disabled={!name.trim()}>
+          Save
+        </Button>
+        <Button
+          type="button"
+          variant="ghostOnDark"
+          onClick={() => setOpen(false)}
+          disabled={busy}
+        >
+          Cancel
+        </Button>
+      </div>
+      {error && (
+        <p role="alert" className="text-meta font-medium text-danger-on-dark">
+          {error}
+        </p>
+      )}
+    </form>
+  )
+}
+
+/**
+ * What a host loses by deleting a session, said in the confirmation itself.
+ *
+ * The cascades in 0001 take the matches and the ledger down with the row, so
+ * "Are you sure?" is the wrong question — the number of scored games and
+ * recorded payments is the thing worth knowing before the second tap. Counts,
+ * not money: the currency lives on the club, which this card does not always
+ * have, and "8 payments" carries the same warning as a peso figure.
+ */
+export function deleteWarning(matches: number, payments: number): string {
+  const lost = [
+    matches > 0 ? `${matches} ${matches === 1 ? 'match' : 'matches'}` : '',
+    payments > 0 ? `${payments} ${payments === 1 ? 'payment' : 'payments'}` : '',
+  ].filter(Boolean)
+
+  if (lost.length === 0) return 'Delete this session?'
+  if (lost.length === 1) return `Delete this and ${lost[0]}?`
+  return `Delete this, ${lost[0]} and ${lost[1]}?`
+}
+
+/**
+ * `secondaryOnDark` unarmed, not `dangerQuiet`: quiet danger is `text-danger` on
+ * transparent, which is 1.8:1 here. Red arrives on the armed step, filled.
+ */
+function DeleteSessionButton({
+  session,
+  matches,
+  ledger,
+}: {
+  session: Session
+  matches: Match[]
+  ledger: LedgerEntry[]
+}) {
+  const navigate = useNavigate()
+  const [busy, error, run] = useAction()
+
+  return (
+    <div className="mt-3 border-t border-white/10 pt-3">
+      <ConfirmButton
+        variant="secondaryOnDark"
+        icon={Trash2}
+        full
+        label="Delete session"
+        confirmLabel={deleteWarning(
+          matches.filter((m) => m.ended_at).length,
+          ledger.filter((e) => e.amount_paid > 0).length,
+        )}
+        busy={busy}
+        onConfirm={() =>
+          run(async () => {
+            await deleteSession(session)
+            // No reload — the row it would read is gone.
+            navigate(`/clubs/${session.club_id}`)
+          })
+        }
+      />
+      {error && (
+        <p role="alert" className="mt-2 text-meta font-medium text-danger-on-dark">
+          {error}
+        </p>
+      )}
+    </div>
   )
 }
 

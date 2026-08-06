@@ -114,6 +114,15 @@ function ok<T>(res: { data: unknown; error: { message: string; code?: string } |
     if (res.error.code === '23505' && /club_members/.test(res.error.message)) {
       throw new Error('Someone in this club already uses that name — try adding a last initial.')
     }
+    // PGRST116 is `.single()` finding no row. Since clubs and sessions can be
+    // deleted, a screen someone already has open can land here — realtime fires
+    // reload(), the row is gone, and the raw PostgREST text ("JSON object
+    // requested, multiple (or no) rows returned") is not a sentence to show a
+    // host. Mapped here rather than per screen: every .single() read comes
+    // through ok(), so getClub and getSession are both covered at once.
+    if (res.error.code === 'PGRST116') {
+      throw new Error('That’s gone — it may have been deleted.')
+    }
     throw new Error(res.error.message)
   }
   return res.data as T
@@ -186,6 +195,24 @@ export async function createClub(name: string, ownerName: string): Promise<strin
       owner_name: ownerName.trim(),
     }),
   )
+}
+
+/**
+ * The slug is deliberately left alone: nothing routes by it — every link in the
+ * app is /clubs/:id — and it carries a random suffix for global uniqueness that
+ * a rename would only have to invent again.
+ */
+export async function renameClub(clubId: string, name: string): Promise<void> {
+  ok(await supabase.from('clubs').update({ name: name.trim() }).eq('id', clubId))
+}
+
+/**
+ * Everything the club owns goes with it: sessions, members, matches, ledger.
+ * clubs_delete is owner-only in RLS, so a co-host tapping this gets refused by
+ * the database whatever the UI decided to render.
+ */
+export async function deleteClub(clubId: string): Promise<void> {
+  ok(await supabase.from('clubs').delete().eq('id', clubId))
 }
 
 /** Club money, in the club's own currency. */
@@ -462,6 +489,10 @@ export async function setSessionFee(sessionId: string, amount: number): Promise<
   ok(await supabase.from('sessions').update({ fee_amount: fee }).eq('id', sessionId))
 }
 
+export async function renameSession(sessionId: string, name: string): Promise<void> {
+  ok(await supabase.from('sessions').update({ name: name.trim() }).eq('id', sessionId))
+}
+
 /** Session toggle: let the players on court record their own score. */
 export async function setPlayerScoring(sessionId: string, allow: boolean): Promise<void> {
   ok(await supabase.from('sessions').update({ allow_player_scoring: allow }).eq('id', sessionId))
@@ -492,6 +523,27 @@ export async function setSessionPhoto(sessionId: string, blob: Blob | null): Pro
 
   const url = blob ? `${bucket.getPublicUrl(path).data.publicUrl}?v=${Date.now()}` : null
   ok(await supabase.from('sessions').update({ photo_url: url }).eq('id', sessionId))
+}
+
+/**
+ * Delete the session and everything recorded in it — players, matches, fees.
+ * The FKs in 0001 cascade, so the row is all the client has to remove.
+ *
+ * The photo has to go first, and that ordering is the whole reason this takes a
+ * Session rather than an id. Storage RLS in 0011 reads the session id out of the
+ * folder name and asks session_photo_admin, which returns false once the row is
+ * gone — delete the row first and the file is orphaned beyond any client's
+ * reach. A failed remove still shouldn't strand the host with a session they
+ * asked to delete, so it does not block the delete.
+ */
+export async function deleteSession(session: Session): Promise<void> {
+  await ensureSession()
+  if (session.photo_url) {
+    await supabase.storage
+      .from(SESSION_PHOTO_BUCKET)
+      .remove([`${session.id}/photo.jpg`])
+  }
+  ok(await supabase.from('sessions').delete().eq('id', session.id))
 }
 
 /**

@@ -1,5 +1,5 @@
-import { useEffect, useMemo, useState } from 'react'
-import type { ReactNode } from 'react'
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
+import type { ReactNode, RefObject } from 'react'
 import {
   Flag,
   Handshake,
@@ -13,7 +13,6 @@ import {
   UserPlus,
 } from 'lucide-react'
 import {
-  TIER_LABEL,
   addPlayer,
   cancelMatch,
   clearCourtLineup,
@@ -38,8 +37,9 @@ import {
   applyPairs,
   courtFreeAt,
   forecast,
-  queueOrder,
+  queueView,
   typicalMatchMs,
+  type Forecast,
   type Lineup,
   type Pins,
   type QueuePlayer,
@@ -154,6 +154,12 @@ export function LiveSession({
   //
   // Memoised because each court enumerates a few hundred candidate lineups.
   const plan = useMemo(() => {
+    // A forecast for a night that is over is not a forecast. Ending a session
+    // does not end the matches still open on its courts, so without this the
+    // card for one of them went on offering "Up next here · any minute" to a
+    // room that had already packed up.
+    if (session.status === 'ended') return { courts: [], onCourtAt: new Map<string, number>() }
+
     const history = finished.map((m) => ({ teamA: m.team_a_ids, teamB: m.team_b_ids }))
     const courts = Array.from({ length: session.court_count }, (_, i) => {
       const match = live.find((m) => m.court_number === i + 1)
@@ -165,7 +171,7 @@ export function LiveSession({
       }
     })
     return forecast(waiting, courts, history, typicalMs, pins)
-  }, [session.court_count, live, finished, waiting, typicalMs, now, pins])
+  }, [session.status, session.court_count, live, finished, waiting, typicalMs, now, pins])
 
   // Who is spoken for by which *other* court, so the bench can say so. The bench
   // still offers them: taking a player off court 2's next-up and onto court 1's
@@ -188,22 +194,22 @@ export function LiveSession({
 
   // "You're 3rd" is the answer to a question nobody actually asked; "you're on
   // in about ten minutes" is. One label per waiting player, keyed by member id.
-  const waits = useMemo(() => {
-    const out = new Map<string, string>()
-    for (const [id, at] of plan.onCourtAt) out.set(id, waitLabel(at, now))
-    for (const court of plan.courts) {
-      if (court.freeAt > now) continue
-      for (const id of everyone(court.lineup)) out.set(id, 'up next')
-    }
-    return out
-  }, [plan, now])
+  const waits = useMemo(
+    () => waitLabels(plan, session.status, now),
+    [plan, session.status, now],
+  )
+
+  // The list every number on this screen is counted off, in the order the
+  // courts above will actually be filled — not the order the ranking rule alone
+  // would give. See queueView in queue.ts.
+  const shown = useMemo(() => queueView(waiting, plan), [waiting, plan])
 
   // "Where am I in the queue" is the only question most players open this screen
   // to answer, and it used to sit below every court card — four large cards of
   // scrolling on a busy night. It leads the screen now.
   const mine = players.find((p) => p.club_members.id === me?.id && p.status !== 'left')
   const myPosition = mine
-    ? queueOrder(waiting).findIndex((e) => e.memberId === mine.club_members.id) + 1
+    ? shown.findIndex((e) => e.memberId === mine.club_members.id) + 1
     : 0
   const myNext = me
     ? (plan.courts.find((c) => everyone(c.lineup).includes(me.id)) ?? null)
@@ -274,10 +280,11 @@ export function LiveSession({
 
       <Queue
         players={players}
-        order={waiting}
+        order={shown}
         me={me}
         admin={admin}
         adding={adding}
+        status={session.status}
         waits={waits}
         sessionId={session.id}
         requests={pairRequests}
@@ -326,6 +333,52 @@ function useNow(intervalMs: number): number {
 export function waitLabel(freeAt: number, now: number): string {
   const minutes = Math.round((freeAt - now) / 60_000)
   return minutes < 2 ? 'any minute' : `~${minutes} min`
+}
+
+/**
+ * The right-hand column of a queue row: how long, and which court it is for.
+ * `called` is a court already standing empty — a promise rather than a guess,
+ * and the only one of these that gets a pill.
+ */
+export type Wait = { label: string; called: boolean; court?: number }
+
+/**
+ * One `Wait` per waiting player, keyed by club_members.id.
+ *
+ * Empty unless the session is live. A wait is a claim about what happens next,
+ * and neither a night that hasn't started nor one that has finished has a next
+ * — rows were printing "~9 min" under a header that said "Not started", and
+ * "up next" under one that said "Ended".
+ *
+ * Courts are read before `onCourtAt` so a player in a lineup keeps the court
+ * number: `forecast` stamps them with that court's own `freeAt` (see queue.ts),
+ * so the minutes are the same either way, but only the lineup knows where.
+ */
+export function waitLabels(
+  plan: Forecast,
+  status: SessionStatus,
+  now: number,
+): Map<string, Wait> {
+  const out = new Map<string, Wait>()
+  if (status !== 'live') return out
+
+  for (const court of plan.courts) {
+    const called = court.freeAt <= now
+    for (const id of everyone(court.lineup)) {
+      out.set(id, {
+        label: called ? 'Up next' : waitLabel(court.freeAt, now),
+        called,
+        court: court.court,
+      })
+    }
+  }
+
+  // Everyone past the first round: a time, but no court to name yet.
+  for (const [id, at] of plan.onCourtAt) {
+    if (!out.has(id)) out.set(id, { label: waitLabel(at, now), called: false })
+  }
+
+  return out
 }
 
 /** Your partner and who you're up against, from your own side of the net. */
@@ -952,12 +1005,66 @@ function TeamSlots({
 
 /* -------------------------------------------------------------------- queue */
 
+/**
+ * First, Last, Invert, Play — rows travel to their new place instead of
+ * teleporting into it.
+ *
+ * Not decoration. The queue reorders on its own every time a match ends, and a
+ * walk-in with no games yet lands at the *top* and pushes everyone down a place.
+ * That is the fairness rule working exactly as promised, and it is
+ * indistinguishable from the list glitching unless you can see it happen — which
+ * is why there is a sentence above the list apologising for it.
+ *
+ * `offsetTop`, not getBoundingClientRect: it is measured against the card, so
+ * scrolling the page while the list reorders cannot fling a row across it.
+ *
+ * Measured every render rather than when the order changes. Rows also move
+ * without reordering — a wait turning from "~2 min" into an Up next pill is
+ * taller than the text it replaced and shifts everyone below it — and a
+ * remembered position that skipped one of those is a row animating from
+ * somewhere it never was. Six rows of `offsetTop` is not worth being clever about.
+ *
+ * ponytail: moves only. A row leaving the queue — its player just went on court
+ * — vanishes while the rest close the gap. Animating that out needs the row kept
+ * mounted after React has already dropped it, which is a whole mechanism rather
+ * than a measurement.
+ */
+function useFlip(container: RefObject<HTMLElement | null>) {
+  const previous = useRef(new Map<string, number>())
+
+  useLayoutEffect(() => {
+    if (!container.current) return
+    // index.css kills animation for prefers-reduced-motion, but that rule only
+    // reaches CSS animations. One started from JS has to ask for itself.
+    const still = window.matchMedia('(prefers-reduced-motion: reduce)').matches
+    const next = new Map<string, number>()
+
+    for (const el of container.current.children) {
+      const row = el as HTMLElement
+      const id = row.dataset.flip
+      if (!id) continue // the "show all" footer, which never moves
+      const top = row.offsetTop
+      next.set(id, top)
+
+      const was = previous.current.get(id)
+      if (still || was === undefined || was === top) continue
+      row.animate(
+        [{ transform: `translateY(${was - top}px)` }, { transform: 'none' }],
+        { duration: 320, easing: 'cubic-bezier(0.2, 0.9, 0.3, 1)' },
+      )
+    }
+
+    previous.current = next
+  })
+}
+
 function Queue({
   players,
   order: queue,
   me,
   admin,
   adding,
+  status,
   waits,
   sessionId,
   requests,
@@ -966,13 +1073,19 @@ function Queue({
   reload,
 }: {
   players: SessionPlayer[]
-  /** The waiting players as the matchmaker sees them, pairings already folded in. */
+  /**
+   * The waiting players in the order they will actually go on — the forecast
+   * first, the ranking rule after it. Pairings already folded in. Rendered as
+   * given; this list is where the numbers on the rows come from.
+   */
   order: QueuePlayer[]
   me: Member | null
   admin: boolean
   adding: boolean
-  /** Wait label per club_members.id. Missing = nothing worth guessing. */
-  waits: Map<string, string>
+  /** A queue only until the night is over, after which this is a roster. */
+  status: SessionStatus
+  /** Wait per club_members.id. Missing = nothing worth guessing. */
+  waits: Map<string, Wait>
   sessionId: string
   requests: PairRequest[]
   /** Whether the viewer is in a position to ask anyone at all. */
@@ -985,9 +1098,10 @@ function Queue({
   const resting = players.filter((p) => p.status === 'resting')
   const playing = players.filter((p) => p.status === 'playing')
 
-  // Ordered by the same list the courts above were filled from, keyed by
-  // club_members.id so a pairing means the same thing here as it does there.
-  const order = queueOrder(queue)
+  // Already in the order the courts above will actually be filled in — this list
+  // used to re-sort by the ranking rule and so could disagree with the forecast
+  // it prints alongside each row.
+  const order = queue
   const byId = new Map(waiting.map((p) => [p.club_members.id, p]))
 
   // Who's next is the question this list answers; the twenty-second person in
@@ -995,6 +1109,13 @@ function Queue({
   // your own position whether or not your row is on screen.
   const [shownOrder, showAllWaiting] = useShowAll(order, 6)
   const [shownResting, showAllResting] = useShowAll(resting, 3)
+
+  // Once the night is over this stops being a queue and becomes the list of who
+  // was here: no numbers, no waits, nothing promising a game that isn't coming.
+  const over = status === 'ended'
+
+  const list = useRef<HTMLDivElement>(null)
+  useFlip(list)
 
   return (
     <>
@@ -1013,45 +1134,64 @@ function Queue({
           )
         }
       >
-        Queue{waiting.length > 0 && ` · ${waiting.length} waiting`}
+        {over ? `Players · ${waiting.length}` : `Queue${waiting.length > 0 ? ` · ${waiting.length} waiting` : ''}`}
       </SectionHeading>
 
       {waiting.length === 0 ? (
         <EmptyState
           message={
-            playing.length > 0 ? 'Everyone is on court.' : 'Nobody is in the queue yet.'
+            over
+              ? 'Nobody was still in the queue.'
+              : playing.length > 0
+                ? 'Everyone is on court.'
+                : 'Nobody is in the queue yet.'
           }
-          hint={playing.length > 0 ? undefined : 'Share the join code to fill it.'}
+          // No invitation once it's over: `join_session` refuses an ended
+          // session, so the code would only hand someone an error.
+          hint={over || playing.length > 0 ? undefined : 'Share the join code to fill it.'}
         />
       ) : (
-        <Card className="divide-y divide-hairline p-0">
-          {shownOrder.map((entry, index) => {
-            // queueOrder is built from the same list as byId, so a miss cannot
-            // happen today — but a bare `!` here would take the whole live
-            // screen down mid-session if that ever stopped being true.
-            const player = byId.get(entry.memberId)
-            if (!player) return null
-            return (
-              <PlayerRow
-                key={player.id}
-                player={player}
-                position={index + 1}
-                isMe={player.club_members.id === me?.id}
-                admin={admin}
-                wait={waits.get(player.club_members.id)}
-                partnerName={
-                  entry.partnerId ? byId.get(entry.partnerId)?.club_members.display_name : undefined
-                }
-                pair={{ sessionId, requests, meId: me?.id ?? null, canAsk }}
-                onRemoved={setRemoved}
-                reload={reload}
-              />
-            )
-          })}
-          {showAllWaiting && (
-            <ShowAllRow count={waiting.length} noun="waiting" onClick={showAllWaiting} />
+        <>
+          {/* Whoever has played least goes on next, so a walk-in with no games
+              yet lands at the top and everyone below them moves down a place.
+              That is the fairness rule working, but it looks like the list
+              glitching unless the screen says so. */}
+          {status === 'live' && (
+            <p className="-mt-1.5 mb-2 text-meta text-muted">Fewest games played goes first.</p>
           )}
-        </Card>
+          <Card ref={list} className="divide-y divide-hairline p-0">
+            {shownOrder.map((entry, index) => {
+              // The order is built from the same list as byId, so a miss cannot
+              // happen today — but a bare `!` here would take the whole live
+              // screen down mid-session if that ever stopped being true.
+              const player = byId.get(entry.memberId)
+              if (!player) return null
+              return (
+                <PlayerRow
+                  key={player.id}
+                  player={player}
+                  // A number is a claim about who plays next. Before the host
+                  // starts and after they finish, nobody does.
+                  position={status === 'live' ? index + 1 : undefined}
+                  isMe={player.club_members.id === me?.id}
+                  admin={admin}
+                  wait={waits.get(player.club_members.id)}
+                  partnerName={
+                    entry.partnerId
+                      ? byId.get(entry.partnerId)?.club_members.display_name
+                      : undefined
+                  }
+                  pair={{ sessionId, requests, meId: me?.id ?? null, canAsk }}
+                  onRemoved={setRemoved}
+                  reload={reload}
+                />
+              )
+            })}
+            {showAllWaiting && (
+              <ShowAllRow count={waiting.length} noun="waiting" onClick={showAllWaiting} />
+            )}
+          </Card>
+        </>
       )}
 
       {resting.length > 0 && (
@@ -1279,8 +1419,8 @@ function PlayerRow({
   position?: number
   isMe: boolean
   admin: boolean
-  /** "up next" or "~9 min". Absent for anyone not waiting on a court. */
-  wait?: string
+  /** When they're on, and where. Absent for anyone the forecast can't place. */
+  wait?: Wait
   /** Set when this player has an accepted pairing with someone also waiting. */
   partnerName?: string
   /** Absent on the sitting-out list, where there is nobody to ask. */
@@ -1292,7 +1432,15 @@ function PlayerRow({
   const name = player.club_members.display_name
 
   return (
-    <div className="flex flex-wrap items-center gap-3 px-4 py-3">
+    <div
+      // The handle useFlip measures this row by. On the row rather than a
+      // wrapper: a wrapper would be the thing that moves, and the divider
+      // between rows would travel with it.
+      data-flip={player.id}
+      // Your own row, in the same tint SelfStatus uses at the top of the screen
+      // — one colour meaning "this part is about you", used twice.
+      className={`flex flex-wrap items-center gap-3 px-4 py-3 ${isMe ? 'bg-tint' : ''}`}
+    >
       {position !== undefined && (
         <span className="tnum w-5 shrink-0 text-meta font-semibold text-muted">{position}</span>
       )}
@@ -1305,19 +1453,44 @@ function PlayerRow({
         <p className="truncate text-body font-medium text-ink">
           {name}
           {isMe && <span className="ml-1.5 text-meta text-muted">(you)</span>}
+          {/* A guest has no phone, so the host does everything for them. Beside
+              the name because it says what this player *is*; the right-hand
+              side of the row is for what happens to them next. */}
+          {isGuest(player.club_members) && (
+            <Pill tone="neutral" className="ml-1.5 align-middle">
+              Guest
+            </Pill>
+          )}
         </p>
-        <p className="tnum mt-0.5 text-meta text-muted">
-          {player.games_played} {player.games_played === 1 ? 'game' : 'games'} ·{' '}
-          {TIER_LABEL[player.club_members.skill_tier]}
-          {wait && <span className="font-medium text-primary"> · {wait}</span>}
-          {partnerName && <span className="text-primary"> · with {partnerName}</span>}
+        <p className="tnum mt-0.5 truncate text-meta text-muted">
+          {player.games_played} {player.games_played === 1 ? 'game' : 'games'}
+          {/* Named the same as PairedNote. This row shows a true games count
+              next to a rank that came from the *pair's* higher count, so "0
+              games" can sit below "1 game" — the word "paired" is the only
+              thing on the row that explains why. */}
+          {partnerName && <span className="text-primary"> · paired with {partnerName}</span>}
         </p>
       </div>
 
-      {pair && <PairButton player={player} isMe={isMe} pair={pair} reload={reload} />}
+      {/* The one thing people open this screen to read, so it gets a column of
+          its own rather than a clause at the end of a grey sentence. The tier
+          is not repeated here — it is already on the avatar. */}
+      {wait && (
+        <div className="shrink-0 text-right">
+          {wait.called ? (
+            <Pill tone="live" dot>
+              {wait.label}
+            </Pill>
+          ) : (
+            <span className="tnum text-meta font-semibold text-primary">{wait.label}</span>
+          )}
+          {wait.court !== undefined && (
+            <p className="mt-0.5 text-caption text-muted">Court {wait.court}</p>
+          )}
+        </div>
+      )}
 
-      {/* A guest has no phone, so the host does everything for them. */}
-      {isGuest(player.club_members) && <Pill tone="neutral">Guest</Pill>}
+      {pair && <PairButton player={player} isMe={isMe} pair={pair} reload={reload} />}
 
       {admin && !isMe && player.status !== 'left' && (
         <ConfirmButton
@@ -1398,11 +1571,16 @@ function PairButton({
 
   if (!pair.canAsk || spokenFor || isGuest(player.club_members)) return null
 
+  // Icon alone. The wait column to its left is what the row is for, and "Play
+  // with" spelled out down twenty rows was taking a third of the width to
+  // repeat itself. The label lives in aria-label, where it still reaches anyone
+  // who needs it read out.
   return (
     <Button
       variant="ghost"
       size="sm"
       icon={Handshake}
+      className="px-2"
       loading={busy}
       title={error ?? undefined}
       aria-label={`Ask ${player.club_members.display_name} to play with you`}
@@ -1412,9 +1590,7 @@ function PairButton({
           reload()
         })
       }
-    >
-      Play with
-    </Button>
+    />
   )
 }
 

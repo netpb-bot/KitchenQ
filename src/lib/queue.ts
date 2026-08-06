@@ -206,6 +206,19 @@ function intact(four: QueuePlayer[]): boolean {
 const DEFAULT_MATCH_MS = 12 * 60 * 1000
 
 /**
+ * The band a measured match length is allowed to land in.
+ *
+ * A rec-doubles game is not ninety seconds and it is not an hour. The median
+ * defends against one match left running while everyone went to dinner, but not
+ * against the opposite: a start mis-tapped and scored straight away records a
+ * ten-second match, and on a quiet night that one sample is the median. Every
+ * row on the screen then reads "any minute" and everyone waits a quarter hour,
+ * which is the single fastest way to make the queue look like it is lying.
+ */
+const MIN_MATCH_MS = 5 * 60 * 1000
+const MAX_MATCH_MS = 30 * 60 * 1000
+
+/**
  * The soonest a running match is ever reported as ending. A game that overruns
  * would otherwise sit at "~0 min" for the rest of its life, which reads as a
  * broken clock rather than a long rally.
@@ -281,7 +294,8 @@ function pinnedLineup(
  * How long a match takes tonight, for wait estimates.
  *
  * Median, not mean: one match left running while everyone went to dinner would
- * drag an average far enough to make every estimate on the screen wrong.
+ * drag an average far enough to make every estimate on the screen wrong. Then
+ * clamped, because a median of one bad sample is still one bad sample.
  */
 export function typicalMatchMs(
   matches: { started_at: string; ended_at: string | null }[],
@@ -294,7 +308,9 @@ export function typicalMatchMs(
 
   if (lengths.length === 0) return DEFAULT_MATCH_MS
   const mid = Math.floor(lengths.length / 2)
-  return lengths.length % 2 === 1 ? lengths[mid] : (lengths[mid - 1] + lengths[mid]) / 2
+  const median =
+    lengths.length % 2 === 1 ? lengths[mid] : (lengths[mid - 1] + lengths[mid]) / 2
+  return Math.min(Math.max(median, MIN_MATCH_MS), MAX_MATCH_MS)
 }
 
 /**
@@ -353,17 +369,48 @@ export function forecast(
   // Everyone left is at least a full round behind: a court has to come free,
   // play one of the matches above, and come free again.
   //
-  // ponytail: assumes every court turns over at the same rate. Coarse enough
-  // that the UI rounds it to minutes anyway.
-  const soonest = upcoming[0].freeAt
-  const perRound = 4 * courts.length
-  queueOrder(waiting)
-    .filter((p) => !claimed.has(p.memberId))
-    .forEach((p, rank) => {
-      onCourtAt.set(p.memberId, soonest + typicalMs * (Math.floor(rank / perRound) + 1))
-    })
+  // Each court keeps its own clock. Pricing everyone off the first court's told
+  // the back of the queue they were on in ten minutes while the court that would
+  // actually take them was still twenty minutes into a match — and counting
+  // every court in the session rather than the ones that could be filled
+  // understated the wait again on top of that.
+  const nextFree = upcoming.map((u) => u.freeAt + typicalMs)
+  const rest = queueOrder(waiting).filter((p) => !claimed.has(p.memberId))
+  for (let i = 0; i < rest.length; i += 4) {
+    // The court coming free soonest takes the next four, then goes to the back.
+    const soonest = nextFree.indexOf(Math.min(...nextFree))
+    for (const p of rest.slice(i, i + 4)) onCourtAt.set(p.memberId, nextFree[soonest])
+    // ponytail: every future match is assumed to run typicalMs. Per-court
+    // history would be precision a median of the whole night can't support.
+    nextFree[soonest] += typicalMs
+  }
 
   return { courts: upcoming, onCourtAt }
+}
+
+/**
+ * The queue as it will actually happen, which is not the same list as
+ * `queueOrder` gives.
+ *
+ * A row's number is a promise about who plays next, so it has to come from the
+ * same walk that filled the courts. `queueOrder` is only one of the three things
+ * `pickNextMatch` weighs — it will skip the fourth-longest waiter to balance the
+ * teams — and a court the host pinned by hand ignores it outright. Numbering by
+ * the ranking rule while playing by the forecast is how a row ends up reading
+ * "9. Ana · up next", which is the queue telling a player one thing and then
+ * doing another in front of them.
+ *
+ * Past the first round nobody has been picked yet, so the ranking rule is the
+ * honest answer for the tail. One round is all `forecast` commits to.
+ */
+export function queueView(waiting: QueuePlayer[], plan: Forecast): QueuePlayer[] {
+  const byId = new Map(waiting.map((p) => [p.memberId, p]))
+  const picked = plan.courts.flatMap((c) => [...c.lineup.teamA, ...c.lineup.teamB])
+  const claimed = new Set(picked)
+  return [
+    ...picked.flatMap((id) => byId.get(id) ?? []),
+    ...queueOrder(waiting).filter((p) => !claimed.has(p.memberId)),
+  ]
 }
 
 /* ------------------------------------------------------------------ scoring */

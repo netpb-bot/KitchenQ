@@ -5,6 +5,7 @@ import {
   forecast,
   pickNextMatch,
   queueOrder,
+  queueView,
   typicalMatchMs,
   type PastMatch,
   type QueuePlayer,
@@ -323,6 +324,18 @@ describe('typicalMatchMs', () => {
   it('takes the middle value of an odd number of matches', () => {
     expect(typicalMatchMs([match(0, 8), match(10, 30), match(40, 52)])).toBe(12 * MIN)
   })
+
+  // A start mis-tapped and scored straight away is a ten-second match, and on a
+  // quiet night it is also the median. Unclamped, every row on the screen then
+  // reads "any minute" and everybody waits a quarter hour.
+  it('refuses to believe a match took seconds', () => {
+    expect(typicalMatchMs([match(0, 0.2)])).toBe(5 * MIN)
+    expect(typicalMatchMs([match(0, 0.2), match(1, 1.5), match(2, 2.1)])).toBe(5 * MIN)
+  })
+
+  it('refuses to believe a match took an hour', () => {
+    expect(typicalMatchMs([match(0, 45), match(50, 110), match(120, 175)])).toBe(30 * MIN)
+  })
 })
 
 describe('courtFreeAt', () => {
@@ -389,6 +402,69 @@ describe('forecast', () => {
   it('gives every waiting player an estimate', () => {
     const { onCourtAt } = forecast(roster(11), courts(NOW, NOW), [], 10 * MIN)
     expect(onCourtAt.size).toBe(11)
+  })
+
+  // Every court keeps its own clock. Pricing the whole tail off the first court
+  // told players 13-16 they were on in ten minutes while the court that would
+  // actually take them was twenty minutes into a match.
+  it('waits for the court that will actually take you', () => {
+    const { onCourtAt } = forecast(roster(16), courts(NOW, NOW + 20 * MIN), [], 10 * MIN)
+    // Court 1 frees now and again at +10; court 2 frees at +20 and again at +30.
+    expect(onCourtAt.get('p8')).toBe(NOW + 10 * MIN)
+    expect(onCourtAt.get('p11')).toBe(NOW + 10 * MIN)
+    expect(onCourtAt.get('p12')).toBe(NOW + 20 * MIN)
+    expect(onCourtAt.get('p15')).toBe(NOW + 20 * MIN)
+  })
+
+  // A court that couldn't be filled isn't a court that's about to take anyone,
+  // so it must not be counted into how fast the queue moves.
+  it('counts only the courts it could fill', () => {
+    // Three courts, but seven waiting fills exactly one.
+    const { courts: up, onCourtAt } = forecast(roster(7), courts(NOW, NOW, NOW), [], 10 * MIN)
+    expect(up).toHaveLength(1)
+    expect(onCourtAt.get('p4')).toBe(NOW + 10 * MIN)
+    expect(onCourtAt.get('p6')).toBe(NOW + 10 * MIN)
+  })
+})
+
+describe('queueView', () => {
+  const NOW = 1_000_000
+  const courts = (...freeAt: number[]) =>
+    freeAt.map((at, i) => ({ court: i + 1, freeAt: at }))
+  const pins = (entries: Record<number, (string | undefined)[]>) =>
+    new Map(Object.entries(entries).map(([court, slots]) => [Number(court), slots]))
+
+  // The bug this function exists for: a player the host pinned by hand was
+  // numbered by the ranking rule, so the last row on the list read "up next".
+  it('puts a pinned player at the top of the list', () => {
+    const waiting = roster(9)
+    const plan = forecast(waiting, courts(NOW), [], 10 * MIN, pins({ 1: ['p8'] }))
+    expect(queueView(waiting, plan)[0].memberId).toBe('p8')
+  })
+
+  it('numbers the four who are actually going on first', () => {
+    const waiting = roster(9)
+    const plan = forecast(waiting, courts(NOW), [], 10 * MIN)
+    const shown = queueView(waiting, plan).map((p) => p.memberId)
+    expect(shown.slice(0, 4).sort()).toEqual([...everyone(plan.courts[0].lineup)].sort())
+  })
+
+  it('keeps everyone, exactly once', () => {
+    const waiting = roster(11)
+    const plan = forecast(waiting, courts(NOW, NOW + 5 * MIN), [], 10 * MIN)
+    const shown = queueView(waiting, plan).map((p) => p.memberId)
+    expect(shown).toHaveLength(11)
+    expect(new Set(shown).size).toBe(11)
+  })
+
+  // Below four waiting there is no forecast to follow, so the ranking rule is
+  // the only answer — and it is still an answer.
+  it('falls back to the ranking rule when no court can be filled', () => {
+    const waiting = roster(3)
+    const plan = forecast(waiting, courts(NOW), [], 10 * MIN)
+    expect(queueView(waiting, plan).map((p) => p.memberId)).toEqual(
+      queueOrder(waiting).map((p) => p.memberId),
+    )
   })
 })
 
