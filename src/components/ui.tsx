@@ -182,9 +182,14 @@ export function Card({
 export function DarkCard({
   className = '',
   watermark: Mark,
+  photo,
   children,
   ...props
-}: ComponentProps<'div'> & { watermark?: LucideIcon }) {
+}: ComponentProps<'div'> & {
+  watermark?: LucideIcon
+  /** Background photo. Held well back — this card's job is still its text. */
+  photo?: string | null
+}) {
   return (
     <div
       // shadow-pop, not shadow-lift: lift carries the light hairline, which on
@@ -192,6 +197,20 @@ export function DarkCard({
       className={`relative overflow-hidden rounded-card bg-surface-dark p-5 text-white shadow-pop ${className}`}
       {...props}
     >
+      {photo && (
+        // 15%, which is a tint rather than a picture, and deliberately so. This
+        // card carries the smallest text in the app — StatTile's captions are
+        // text-white/55, which clears 4.5:1 on surface-dark with almost nothing
+        // to spare. Anything brighter than this and an overexposed photo takes
+        // those captions below AA. The list card is where the photo is the
+        // photo; here it is the texture behind the numbers.
+        <img
+          src={photo}
+          alt=""
+          aria-hidden
+          className="pointer-events-none absolute inset-0 h-full w-full object-cover opacity-15"
+        />
+      )}
       {Mark && (
         <Mark
           size={150}

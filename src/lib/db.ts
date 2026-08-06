@@ -31,6 +31,7 @@ export type Member = {
   display_name: string
   skill_tier: Tier
   role: Role
+  avatar_url: string | null
 }
 
 export type Session = {
@@ -46,6 +47,8 @@ export type Session = {
   allow_player_scoring: boolean
   started_at: string | null
   ended_at: string | null
+  /** Group shot behind the session's cards. Public URL, `?v=` versioned. */
+  photo_url: string | null
 }
 
 export type PlayerStatus = 'waiting' | 'playing' | 'resting' | 'left'
@@ -55,7 +58,10 @@ export type SessionPlayer = {
   status: PlayerStatus
   games_played: number
   queued_at: string
-  club_members: Pick<Member, 'id' | 'display_name' | 'skill_tier' | 'role' | 'user_id'>
+  club_members: Pick<
+    Member,
+    'id' | 'display_name' | 'skill_tier' | 'role' | 'user_id' | 'avatar_url'
+  >
 }
 
 export type Match = {
@@ -193,31 +199,64 @@ export function duration(session: Session): string {
 
 /* ------------------------------------------------------------------ members */
 
-const MEMBER_COLS = 'id, club_id, user_id, display_name, skill_tier, role'
+const MEMBER_COLS = 'id, club_id, user_id, display_name, skill_tier, role, avatar_url'
+
+/**
+ * Member id -> profile photo, filled by every read that returns members.
+ *
+ * ponytail: a read-through cache rather than a prop. Avatars are drawn from
+ * seven separate `Map<memberId, name>` shapes built in seven files, and
+ * widening all of them to also carry a URL is a far larger change than one
+ * lookup at the leaf. It is not reactive — it is filled by the same load that
+ * triggers the render, so by paint time it is current. If that stops holding,
+ * widen the maps.
+ */
+const photos = new Map<string, string>()
+
+export function photoOf(memberId: string | undefined): string | undefined {
+  return memberId ? photos.get(memberId) : undefined
+}
+
+/** Records what each member's photo is now — including that it is now nothing. */
+function remember<T extends { id: string; avatar_url: string | null }>(members: T[]): T[] {
+  for (const m of members) {
+    if (m.avatar_url) photos.set(m.id, m.avatar_url)
+    else photos.delete(m.id)
+  }
+  return members
+}
 
 export async function listMembers(clubId: string): Promise<Member[]> {
   await ensureSession()
-  return ok(
-    await supabase.from('club_members').select(MEMBER_COLS).eq('club_id', clubId).order('display_name'),
+  return remember(
+    ok<Member[]>(
+      await supabase
+        .from('club_members')
+        .select(MEMBER_COLS)
+        .eq('club_id', clubId)
+        .order('display_name'),
+    ),
   )
 }
 
 /** Every club membership the caller has, newest first. */
 export async function myMemberships(): Promise<Member[]> {
   const userId = await ensureSession()
-  return ok(
-    await supabase
-      .from('club_members')
-      .select(MEMBER_COLS)
-      .eq('user_id', userId)
-      .order('created_at', { ascending: false }),
+  return remember(
+    ok<Member[]>(
+      await supabase
+        .from('club_members')
+        .select(MEMBER_COLS)
+        .eq('user_id', userId)
+        .order('created_at', { ascending: false }),
+    ),
   )
 }
 
 /** The caller's own membership in a club, or null if they haven't joined it. */
 export async function myMember(clubId: string): Promise<Member | null> {
   const userId = await ensureSession()
-  return ok(
+  const member: Member | null = ok(
     await supabase
       .from('club_members')
       .select(MEMBER_COLS)
@@ -225,6 +264,8 @@ export async function myMember(clubId: string): Promise<Member | null> {
       .eq('user_id', userId)
       .maybeSingle(),
   )
+  if (member) remember([member])
+  return member
 }
 
 export function isAdmin(member: Member | null): boolean {
@@ -272,10 +313,37 @@ export async function updateMember(
   ok(await supabase.from('club_members').update(patch).eq('id', memberId))
 }
 
+const AVATAR_BUCKET = 'avatars'
+
+/**
+ * Replace or clear the caller's profile photo, everywhere at once.
+ *
+ * The update matches on user_id rather than one membership id, so the photo
+ * lands on every club they belong to — the face is the person, while the name
+ * and level beside it stay per-club. members_self_update keeps that to their
+ * own rows, and a guest (user_id null) can never reach this.
+ */
+export async function setMyAvatar(blob: Blob | null): Promise<void> {
+  const userId = await ensureSession()
+  const path = `${userId}/avatar.webp`
+  const bucket = supabase.storage.from(AVATAR_BUCKET)
+
+  if (blob) {
+    ok(await bucket.upload(path, blob, { upsert: true, contentType: 'image/webp' }))
+  } else {
+    ok(await bucket.remove([path]))
+  }
+
+  // The object always lives at the same path, so the stored URL carries a
+  // version: without it the CDN keeps serving the old face for an hour.
+  const url = blob ? `${bucket.getPublicUrl(path).data.publicUrl}?v=${Date.now()}` : null
+  ok(await supabase.from('club_members').update({ avatar_url: url }).eq('user_id', userId))
+}
+
 /* ----------------------------------------------------------------- sessions */
 
 const SESSION_COLS =
-  'id, club_id, name, join_code, status, court_count, target_score, win_by, fee_amount, allow_player_scoring, started_at, ended_at'
+  'id, club_id, name, join_code, status, court_count, target_score, win_by, fee_amount, allow_player_scoring, started_at, ended_at, photo_url'
 
 // No I/O/0/1 — these get read aloud across a gym and typed on a phone.
 const CODE_ALPHABET = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789'
@@ -387,6 +455,33 @@ export async function setPlayerScoring(sessionId: string, allow: boolean): Promi
   ok(await supabase.from('sessions').update({ allow_player_scoring: allow }).eq('id', sessionId))
 }
 
+/* ----------------------------------------------------------- session photo */
+
+const SESSION_PHOTO_BUCKET = 'session-photos'
+
+/**
+ * Set or clear the session's background photo — the group shot from that night.
+ *
+ * Same shape as setMyAvatar above, deliberately: fixed path, upsert, and a
+ * `?v=` on the stored URL so replacing the photo is not invisible for an hour
+ * behind the CDN. Hosts only; storage RLS in 0011 reads the session id out of
+ * the folder name and asks is_club_admin, so the folder shape is load-bearing.
+ */
+export async function setSessionPhoto(sessionId: string, blob: Blob | null): Promise<void> {
+  await ensureSession()
+  const path = `${sessionId}/photo.jpg`
+  const bucket = supabase.storage.from(SESSION_PHOTO_BUCKET)
+
+  if (blob) {
+    ok(await bucket.upload(path, blob, { upsert: true, contentType: 'image/jpeg' }))
+  } else {
+    ok(await bucket.remove([path]))
+  }
+
+  const url = blob ? `${bucket.getPublicUrl(path).data.publicUrl}?v=${Date.now()}` : null
+  ok(await supabase.from('sessions').update({ photo_url: url }).eq('id', sessionId))
+}
+
 /**
  * Courts open or close mid-session all the time — a group leaves, the club
  * hands over a spare. Clamped to the same 1–12 the create form uses.
@@ -421,15 +516,17 @@ export async function joinSession(code: string, playerName: string): Promise<str
 
 export async function listSessionPlayers(sessionId: string): Promise<SessionPlayer[]> {
   await ensureSession()
-  return ok(
+  const players = ok<SessionPlayer[]>(
     await supabase
       .from('session_players')
       .select(
-        'id, status, games_played, queued_at, club_members(id, display_name, skill_tier, role, user_id)',
+        'id, status, games_played, queued_at, club_members(id, display_name, skill_tier, role, user_id, avatar_url)',
       )
       .eq('session_id', sessionId)
       .order('queued_at'),
   )
+  remember(players.map((p) => p.club_members))
+  return players
 }
 
 export async function setPlayerStatus(

@@ -44,7 +44,7 @@ export function TeamLine({
     <div className={align === 'right' ? 'text-right' : ''}>
       <div className={`flex items-center gap-1.5 ${align === 'right' ? 'justify-end' : ''}`}>
         {ids.map((id) => (
-          <Avatar key={id} name={names.get(id) ?? 'Unknown'} size="sm" />
+          <Avatar key={id} id={id} name={names.get(id) ?? 'Unknown'} size="sm" />
         ))}
       </div>
       <p

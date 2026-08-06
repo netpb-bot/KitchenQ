@@ -29,6 +29,7 @@ import {
 } from '../lib/db'
 import { standings, type Standing } from '../lib/standings'
 import { Avatar } from '../components/Avatar'
+import { SessionCard } from '../components/SessionCard'
 import { ConnectionBanner, isUnreachable, useOffline } from '../components/ConnectionBanner'
 import { InstallPrompt } from '../components/InstallPrompt'
 import { firstName } from '../components/MatchRow'
@@ -249,7 +250,11 @@ function LiveNowCard({
 }) {
   return (
     <Link ref={ref} to={`/session/${session.id}`} className="mt-5 block">
-      <DarkCard watermark={Swords} className="transition-transform active:scale-[0.99]">
+      <DarkCard
+        watermark={Swords}
+        photo={session.photo_url}
+        className="transition-transform active:scale-[0.99]"
+      >
         <div className="flex items-center gap-4">
           <div className="min-w-0 flex-1">
             <p className="flex items-center gap-2 text-caption font-semibold uppercase text-brand">
@@ -349,7 +354,7 @@ function PlayerCard({
     <Link to="/profile" className="block">
       <DarkCard watermark={Swords} className="transition-transform active:scale-[0.99]">
         <div className="flex items-center gap-4">
-          <Avatar name={me.display_name} size="lg" />
+          <Avatar id={me.id} name={me.display_name} size="lg" />
           <div className="min-w-0 flex-1">
             <p className="truncate text-body font-medium text-white">{me.display_name}</p>
             <div className="mt-2 flex items-center gap-2">
@@ -387,32 +392,6 @@ function timeOfDay(): string {
   if (h < 12) return 'Good morning'
   if (h < 18) return 'Good afternoon'
   return 'Good evening'
-}
-
-function SessionCard({ session }: { session: Session }) {
-  return (
-    <Link to={`/session/${session.id}`} className="block">
-      {/* No live-ring here any more: a running session is pinned to the top of
-          the screen by LiveNowBar, so this list is the not-yet-started ones. */}
-      <Card interactive className="flex items-center gap-3">
-        <div className="min-w-0 flex-1">
-          <p className="truncate text-body font-medium text-ink">{session.name}</p>
-          <p className="tnum mt-0.5 text-meta text-muted">
-            {session.court_count} {session.court_count === 1 ? 'court' : 'courts'} · code{' '}
-            {session.join_code}
-          </p>
-        </div>
-        {session.status === 'live' ? (
-          <Pill tone="live" dot>
-            LIVE
-          </Pill>
-        ) : (
-          <Pill tone="warn">Not started</Pill>
-        )}
-        <ChevronRight size={18} className="text-muted" aria-hidden />
-      </Card>
-    </Link>
-  )
 }
 
 function ActionCard({

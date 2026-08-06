@@ -172,7 +172,7 @@ function Side({
     >
       <div className="flex items-center justify-center gap-1">
         {who.map((name, i) => (
-          <Avatar key={ids[i]} name={name} size="sm" />
+          <Avatar key={ids[i]} id={ids[i]} name={name} size="sm" />
         ))}
       </div>
       {/* Weight as well as the ring: colour alone cannot be what says who is

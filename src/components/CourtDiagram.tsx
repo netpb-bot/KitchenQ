@@ -1,5 +1,5 @@
 import { avatarColor, initials } from './Avatar'
-import { TIER_SHORT, type Tier } from '../lib/db'
+import { TIER_SHORT, photoOf, type Tier } from '../lib/db'
 import { palette } from '../theme'
 
 /**
@@ -21,7 +21,7 @@ const H = FEET_WIDE * SCALE // 100
 const NET = W / 2
 const KITCHEN = KITCHEN_FEET * SCALE
 
-export type CourtSide = { name: string; tier?: Tier }[]
+export type CourtSide = { name: string; id?: string; tier?: Tier }[]
 
 export function CourtDiagram({
   teamA,
@@ -120,20 +120,48 @@ export function CourtDiagram({
 
 function PlayerMark({ player, x, y }: { player: CourtSide[number]; x: number; y: number }) {
   const { name, tier } = player
+  // This mark predates photos and draws its own circle rather than using
+  // <Avatar>, because it has to be SVG to sit on the court — so the photo case
+  // is spelled out again here. The white rim is the same either way.
+  const photo = photoOf(player.id)
   return (
     <g>
-      <circle cx={x} cy={y} r="11" fill={avatarColor(name)} stroke={palette.surface} strokeWidth="2" />
-      <text
-        x={x}
-        y={y}
-        textAnchor="middle"
-        dominantBaseline="central"
-        fill={palette.surface}
-        fontSize="9.5"
-        fontWeight="600"
-      >
-        {initials(name)}
-      </text>
+      {photo ? (
+        <>
+          <image
+            href={photo}
+            x={x - 11}
+            y={y - 11}
+            width="22"
+            height="22"
+            preserveAspectRatio="xMidYMid slice"
+            style={{ clipPath: 'circle(50%)' }}
+          />
+          <circle cx={x} cy={y} r="11" fill="none" stroke={palette.surface} strokeWidth="2" />
+        </>
+      ) : (
+        <>
+          <circle
+            cx={x}
+            cy={y}
+            r="11"
+            fill={avatarColor(name)}
+            stroke={palette.surface}
+            strokeWidth="2"
+          />
+          <text
+            x={x}
+            y={y}
+            textAnchor="middle"
+            dominantBaseline="central"
+            fill={palette.surface}
+            fontSize="9.5"
+            fontWeight="600"
+          >
+            {initials(name)}
+          </text>
+        </>
+      )}
       {/* Tier rides the avatar rather than the name line, so the four levels on
           court can be compared without reading any words. */}
       {tier && (

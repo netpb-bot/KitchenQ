@@ -49,7 +49,7 @@ Your club is **DEPC**. It is created through the in-app flow rather than hardcod
 | **Navigation** | **Two levels: app tabs, then a session-scoped tab bar** |
 | **Gamification** | **Session-wrapped podium recap only.** No XP, no levels, no badges, no medal icons in rankings |
 | **Court view** | **Full SVG court diagram with players positioned on it** |
-| **Avatars** | **Colored initial circles**, deterministic from name; photo upload deferred |
+| **Avatars** | **Uploaded photo, one per person across every club**; colored initial circles, deterministic from name, wherever there isn't one |
 
 ---
 
@@ -291,7 +291,8 @@ An audit before starting found this was not a cosmetic pass. What it actually fi
 
 - **Recurring session schedules** — **decided out.** Sessions are created ad hoc; the `scheduled_at` column stays for later.
 - **RSVP / attendance cap** — parked with the above. The `rsvps` table and `attendance_cap` column exist and are unused.
-- **Photo upload avatars** — needs Supabase Storage, cropping, and moderation thinking.
+- **Avatar moderation** — photo upload shipped (public `avatars` bucket, writes scoped to your own `auth.uid()/` folder, 2MB, WebP). There is no reporting or takedown path: the only way a photo comes down is the person who uploaded it removing it. A club that needs more than that needs a host-side takedown and somewhere for reports to land.
+- **Guest photos** — a guest has no auth identity, so they cannot upload and nobody can upload for them. They keep initials until they claim their account.
 - **Native wrap** via Capacitor once the web app is proven in real use.
 - Tournament brackets, push notifications, XP/badges. Not in scope.
 

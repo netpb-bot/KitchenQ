@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
-import { courtState, matchup, waitLabel } from './LiveSession'
+import { canEnterScore, courtState, matchup, waitLabel } from './LiveSession'
 import type { Lineup } from '../lib/queue'
+import type { Match, Session } from '../lib/db'
 
 describe('courtState', () => {
   it('never offers a startable court before the session is live', () => {
@@ -77,5 +78,29 @@ describe('matchup', () => {
     expect(matchup(lineup('me', 'ghost', 'x', 'y'), 'me', names)).toBe(
       'with a guest vs Ben & Carla',
     )
+  })
+})
+
+describe('canEnterScore', () => {
+  // Only the fields the predicate reads; the rest of Match/Session is noise here.
+  const match = { team_a_ids: ['ana', 'ben'], team_b_ids: ['cara', 'dan'] } as Match
+  const session = (allow: boolean) => ({ allow_player_scoring: allow }) as Session
+
+  it('lets the host score whatever the toggle says', () => {
+    expect(canEnterScore(match, session(false), true, 'host')).toBe(true)
+    expect(canEnterScore(match, session(true), true, 'host')).toBe(true)
+  })
+
+  it('lets a player on either side of the net score, once the toggle is on', () => {
+    expect(canEnterScore(match, session(true), false, 'ana')).toBe(true)
+    expect(canEnterScore(match, session(true), false, 'dan')).toBe(true)
+    expect(canEnterScore(match, session(false), false, 'ana')).toBe(false)
+  })
+
+  // The bug: "players can enter their own score" was read as "anyone may score",
+  // so someone in the queue could end a match they were nowhere near.
+  it('never lets someone off the court end the match', () => {
+    expect(canEnterScore(match, session(true), false, 'eve')).toBe(false)
+    expect(canEnterScore(match, session(true), false, null)).toBe(false)
   })
 })

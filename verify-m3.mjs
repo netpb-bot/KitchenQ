@@ -128,6 +128,20 @@ const run = async () => {
 
   const ids = (await roster()).map((p) => p.club_member_id)
 
+  // session_players comes back unordered, so a lineup sliced off `ids` is
+  // whoever Postgres felt like returning first. That was harmless while anyone
+  // could score any match; now that only the four on court can, a test that
+  // names the scorer has to name the lineup too.
+  const memberId = new Map(
+    (
+      await host
+        .from('session_players')
+        .select('club_member_id, club_members(display_name)')
+        .eq('session_id', session.id)
+    ).data.map((p) => [p.club_members.display_name, p.club_member_id]),
+  )
+  const named = (...names) => names.map((n) => memberId.get(n))
+
   // ------------------------------------------------ correcting a live match
   const live = await start(1, ids.slice(0, 4))
   await rejects(
@@ -195,10 +209,13 @@ const run = async () => {
   check('a correction leaves everyone in the queue', afterFix.every((p) => p.status === 'waiting'))
 
   // -------------------------------------------------- allow_player_scoring
-  const second = await start(1, ids.slice(0, 4))
+  // Ana, Ben, Cara and Dan are on court; Eve is deliberately left in the queue.
+  const ana = players.find((p) => p.name === 'Ana')
+  const eve = players.find((p) => p.name === 'Eve')
+  const second = await start(1, named('Ana', 'Ben', 'Cara', 'Dan'))
   await rejects(
     'with the toggle off, a player cannot record the score',
-    players[0].client.rpc('end_match', { target_match: second, score_a: 11, score_b: 6 }),
+    ana.client.rpc('end_match', { target_match: second, score_a: 11, score_b: 6 }),
     'only the host',
   )
 
@@ -221,7 +238,18 @@ const run = async () => {
     .eq('id', session.id)
   check('the host turns on player scoring', !toggleErr, toggleErr?.message)
 
-  const { error: playerScoreErr } = await players[0].client.rpc('end_match', {
+  // Before the successful score, while the match is still live to be ended.
+  // The toggle means "the players may score their own game", not "anyone may
+  // score any game" — Eve is in the session, waiting, and nowhere near court 1.
+  await rejects(
+    'a player who is not on the court cannot end the match',
+    eve.client.rpc('end_match', { target_match: second, score_a: 11, score_b: 6 }),
+    'only the players on this court',
+  )
+  const stillLive = await readMatch(second)
+  check('the match a bystander tried to end is still live', stillLive.ended_at === null)
+
+  const { error: playerScoreErr } = await ana.client.rpc('end_match', {
     target_match: second,
     score_a: 11,
     score_b: 6,

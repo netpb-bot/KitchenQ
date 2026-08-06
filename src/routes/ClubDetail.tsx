@@ -3,7 +3,6 @@ import { Link, useNavigate, useParams } from 'react-router-dom'
 import {
   Check,
   ChevronLeft,
-  ChevronRight,
   Pencil,
   Plus,
   ShieldCheck,
@@ -36,6 +35,7 @@ import {
 import { standings, type Standing } from '../lib/standings'
 import { AddGuestForm } from '../components/AddGuestForm'
 import { Avatar } from '../components/Avatar'
+import { SessionCard } from '../components/SessionCard'
 import { RankingNote, StandingsList } from '../components/StandingsList'
 import {
   Button,
@@ -196,30 +196,7 @@ function SessionsTab({
       ) : (
         <div className="kq-stagger space-y-3">
           {shown.map((s) => (
-            <Link key={s.id} to={`/session/${s.id}`} className="block">
-              <Card
-                interactive
-                className="flex items-center gap-3"
-              >
-                <div className="min-w-0 flex-1">
-                  <p className="truncate text-body font-medium text-ink">{s.name}</p>
-                  <p className="tnum mt-0.5 text-meta text-muted">
-                    {s.court_count} {s.court_count === 1 ? 'court' : 'courts'} · code{' '}
-                    {s.join_code}
-                  </p>
-                </div>
-                {s.status === 'live' ? (
-                  <Pill tone="live" dot>
-                    LIVE
-                  </Pill>
-                ) : (
-                  <Pill tone={s.status === 'draft' ? 'warn' : 'neutral'}>
-                    {s.status === 'draft' ? 'Not started' : 'Ended'}
-                  </Pill>
-                )}
-                <ChevronRight size={18} className="text-muted" aria-hidden />
-              </Card>
-            </Link>
+            <SessionCard key={s.id} session={s} />
           ))}
           {showAll && (
             <Card className="p-0">
@@ -351,7 +328,7 @@ function DuesTab({
         <Card className="divide-y divide-hairline p-0">
           {shown.map((row) => (
             <div key={row.memberId} className="flex items-center gap-3 px-4 py-3">
-              <Avatar name={row.name} />
+              <Avatar id={row.memberId} name={row.name} />
               <div className="min-w-0 flex-1">
                 <p className="truncate text-body font-medium text-ink">{row.name}</p>
                 <p className="tnum mt-0.5 text-meta text-muted">
@@ -487,7 +464,7 @@ function MemberRow({
   return (
     <div className="px-4 py-3">
       <div className="flex items-center gap-3">
-        <Avatar name={member.display_name} />
+        <Avatar id={member.id} name={member.display_name} />
         <div className="min-w-0 flex-1">
           <p className="truncate text-body font-medium text-ink">
             {member.display_name}

@@ -24,7 +24,7 @@ export function StandingsList({
       {table.map((row, i) => (
         <div key={row.memberId} className="flex items-center gap-3 px-4 py-3">
           <span className="tnum w-5 shrink-0 text-meta font-semibold text-muted">{i + 1}</span>
-          <Avatar name={row.name} />
+          <Avatar id={row.memberId} name={row.name} />
           <div className="min-w-0 flex-1">
             <p className="truncate text-body font-medium text-ink">
               {row.name}

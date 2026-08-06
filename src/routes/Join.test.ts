@@ -8,6 +8,7 @@ const member = (over: Partial<Member> & { display_name: string }): Member => ({
   user_id: null,
   skill_tier: 'intermediate',
   role: 'member',
+  avatar_url: null,
   ...over,
 })
 

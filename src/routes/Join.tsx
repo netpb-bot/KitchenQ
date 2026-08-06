@@ -197,7 +197,7 @@ export function Join() {
                         : 'bg-surface'
                     }`}
                   >
-                    <Avatar name={guest.display_name} size="sm" />
+                    <Avatar id={guest.id} name={guest.display_name} size="sm" />
                     {guest.display_name}
                   </button>
                 ))}

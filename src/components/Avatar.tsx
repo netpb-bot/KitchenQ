@@ -1,11 +1,11 @@
 /**
- * Colored initial circles. The colour is derived from the display name, so a
- * player looks the same everywhere without storing anything. Photo upload is
- * deferred — when it lands, this stays as the fallback.
+ * A player's face, or a coloured circle with their initials when they haven't
+ * uploaded one. The colour is derived from the display name, so someone without
+ * a photo still looks the same everywhere without storing anything.
  */
 
-import type { ReactNode } from 'react'
-import { TIER_SHORT, type Tier } from '../lib/db'
+import { useState, type ReactNode } from 'react'
+import { TIER_SHORT, photoOf, type Tier } from '../lib/db'
 
 // Every swatch here carries white text at >= 4.5:1. Asserted in Avatar.test.ts.
 const SWATCHES = [
@@ -46,24 +46,46 @@ const SIZES = {
 
 export function Avatar({
   name,
+  id,
   size = 'md',
   ring,
   badge,
 }: {
   name: string
+  /** The club_members id, if this is a real member — that's what has a photo. */
+  id?: string
   size?: keyof typeof SIZES
   /** Draws a page-coloured ring, for avatars overlapping other elements. */
   ring?: boolean
   /** Overlaps the bottom-right — a TierBadge on the queue and the court. */
   badge?: ReactNode
 }) {
+  // A photo that 404s falls back rather than showing a broken-image glyph: the
+  // stored URL outlives the object if the upload is later removed by hand.
+  // Remembering *which* url failed, not just that one did, so uploading a
+  // replacement doesn't leave this stuck on initials — the url carries a
+  // version, so a new photo is always a new string.
+  const [broken, setBroken] = useState('')
+  const url = photoOf(id)
+  const photo = url && url !== broken ? url : undefined
+
   const circle = (
     <span
-      className={`inline-flex shrink-0 items-center justify-center rounded-full font-semibold text-white ${SIZES[size]} ${ring ? 'ring-2 ring-page' : ''}`}
+      className={`inline-flex shrink-0 items-center justify-center overflow-hidden rounded-full font-semibold text-white ${SIZES[size]} ${ring ? 'ring-2 ring-page' : ''}`}
       style={{ backgroundColor: avatarColor(name) }}
       aria-hidden
     >
-      {initials(name)}
+      {photo ? (
+        <img
+          src={photo}
+          alt=""
+          loading="lazy"
+          className="h-full w-full object-cover"
+          onError={() => setBroken(photo)}
+        />
+      ) : (
+        initials(name)
+      )}
     </span>
   )
 

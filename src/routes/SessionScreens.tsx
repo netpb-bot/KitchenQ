@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { Link, useLocation, useNavigate, useParams } from 'react-router-dom'
 import type { ReactNode } from 'react'
 import {
@@ -7,12 +7,14 @@ import {
   ChevronLeft,
   Clock,
   Crown,
+  ImagePlus,
   LayoutGrid,
   Pencil,
   RotateCcw,
   Share2,
   Sparkles,
   Timer,
+  Trash2,
   Trophy,
   Users,
 } from 'lucide-react'
@@ -28,6 +30,7 @@ import {
   myMember,
   reopenSession,
   setPlayerScoring,
+  setSessionPhoto,
   setSessionStatus,
   useAction,
   useAsync,
@@ -38,6 +41,7 @@ import {
   type Match,
   type Session,
 } from '../lib/db'
+import { downscale } from '../lib/image'
 import { standings, type Standing } from '../lib/standings'
 import { ConnectionBanner, isUnreachable } from '../components/ConnectionBanner'
 import { FeeSheet } from '../components/FeeSheet'
@@ -203,7 +207,7 @@ function SessionHeader({ view, reload }: { view: View; reload: () => void }) {
     })
 
   return (
-    <DarkCard watermark={Trophy}>
+    <DarkCard watermark={Trophy} photo={session.photo_url}>
       <div className="flex items-start justify-between gap-3">
         <div className="min-w-0">
           {session.status === 'live' ? (
@@ -272,6 +276,9 @@ function SessionHeader({ view, reload }: { view: View; reload: () => void }) {
           {session.status !== 'ended' && (
             <PlayerScoringToggle session={session} reload={reload} />
           )}
+          {/* No status check: the group shot gets taken at the end of the
+              night, which is after the host has already tapped End session. */}
+          <SessionPhotoButton session={session} reload={reload} />
         </div>
       )}
     </DarkCard>
@@ -318,6 +325,75 @@ function PlayerScoringToggle({
         </p>
       )}
     </>
+  )
+}
+
+/**
+ * The night's group photo, which becomes the background of this session's cards.
+ *
+ * No cropping step, unlike AvatarPicker: that circle throws away most of a
+ * photo, so choosing what survives is the whole job. This is a full-width
+ * background — the picture arrives roughly as it was taken, and a host who
+ * wants it framed differently picks a different photo.
+ */
+function SessionPhotoButton({ session, reload }: { session: Session; reload: () => void }) {
+  const fileInput = useRef<HTMLInputElement>(null)
+  const [busy, error, run] = useAction()
+
+  const save = (file: File | undefined) => {
+    if (!file) return
+    run(async () => {
+      await setSessionPhoto(session.id, await downscale(file))
+      reload()
+    })
+  }
+
+  return (
+    <div className="mt-3">
+      <input
+        ref={fileInput}
+        type="file"
+        accept="image/*"
+        className="hidden"
+        onChange={(e) => {
+          save(e.target.files?.[0])
+          // Cleared so picking the same file twice still fires a change.
+          e.target.value = ''
+        }}
+      />
+      <div className="flex flex-wrap gap-2">
+        <Button
+          variant="secondaryOnDark"
+          size="sm"
+          icon={ImagePlus}
+          loading={busy}
+          onClick={() => fileInput.current?.click()}
+        >
+          {session.photo_url ? 'Change photo' : 'Add photo'}
+        </Button>
+        {session.photo_url && (
+          <Button
+            variant="ghostOnDark"
+            size="sm"
+            icon={Trash2}
+            disabled={busy}
+            onClick={() =>
+              run(async () => {
+                await setSessionPhoto(session.id, null)
+                reload()
+              })
+            }
+          >
+            Remove
+          </Button>
+        )}
+      </div>
+      {error && (
+        <p role="alert" className="mt-2 text-meta font-medium text-danger-on-dark">
+          {error}
+        </p>
+      )}
+    </div>
   )
 }
 
@@ -569,7 +645,7 @@ function Recap({ view, table }: { view: View; table: Standing[] }) {
                 className="absolute -top-3 -left-1 -rotate-12 text-warn-fill"
                 fill="currentColor"
               />
-              <Avatar name={winner.name} size="lg" ring />
+              <Avatar id={winner.memberId} name={winner.name} size="lg" ring />
             </span>
             <div className="min-w-0 flex-1">
               <Pill tone="neutral">#1</Pill>
@@ -605,7 +681,7 @@ function Recap({ view, table }: { view: View; table: Standing[] }) {
                   key={row.memberId}
                   className={`flex min-w-0 flex-1 flex-col items-center ${order}`}
                 >
-                  <Avatar name={row.name} size={first ? 'lg' : 'md'} />
+                  <Avatar id={row.memberId} name={row.name} size={first ? 'lg' : 'md'} />
                   <p className="mt-1.5 w-full truncate text-center text-meta font-medium text-ink">
                     {row.name}
                   </p>

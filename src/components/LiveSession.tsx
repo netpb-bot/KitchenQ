@@ -189,6 +189,7 @@ export function LiveSession({
               tiers={tiers}
               session={session}
               admin={admin}
+              meId={me?.id ?? null}
               upNext={plan.courts.find((c) => c.court === court) ?? null}
               waiting={waiting}
               now={now}
@@ -344,12 +345,34 @@ function CourtLabel({ court, children }: { court: number; children?: React.React
   )
 }
 
+/**
+ * Who may end this match. The host always; a player only when the session
+ * allows it *and* they are one of the four on this court.
+ *
+ * "Players can enter their own score" used to be read as "anyone may score", so
+ * every player in the session got an End-match button on every court and could
+ * finish a game they were nowhere near. Mirrors the gate in `end_match`, which
+ * is the one that actually holds — a guest has no account and so ends up on
+ * neither side of this, which is why their court stays the host's to score.
+ */
+export function canEnterScore(
+  match: Match,
+  session: Session,
+  admin: boolean,
+  meId: string | null,
+): boolean {
+  if (admin) return true
+  if (!session.allow_player_scoring || !meId) return false
+  return match.team_a_ids.includes(meId) || match.team_b_ids.includes(meId)
+}
+
 function LiveCourt({
   match,
   names,
   tiers,
   session,
   admin,
+  meId,
   upNext,
   waiting,
   now,
@@ -360,6 +383,8 @@ function LiveCourt({
   tiers: Map<string, Tier>
   session: Session
   admin: boolean
+  /** The viewer's club_members.id — the id space the lineup is written in. */
+  meId: string | null
   /** Who is forecast onto this court once this match ends. */
   upNext: Upcoming | null
   waiting: QueuePlayer[]
@@ -367,9 +392,8 @@ function LiveCourt({
   reload: () => void
 }) {
   const [scoring, setScoring] = useState(false)
-  const onCourt = (id: string) => ({ name: names.get(id) ?? 'Unknown', tier: tiers.get(id) })
-  // The host always scores; players only when the session says they may.
-  const canScore = admin || session.allow_player_scoring
+  const onCourt = (id: string) => ({ id, name: names.get(id) ?? 'Unknown', tier: tiers.get(id) })
+  const canScore = canEnterScore(match, session, admin, meId)
   const byId = new Map(waiting.map((p) => [p.memberId, p]))
 
   return (
@@ -669,7 +693,7 @@ function OpenCourt({
                 onClick={() => substitute(p.memberId)}
                 className="kq-chip inline-flex items-center gap-2 rounded-full bg-surface px-3 py-1.5 text-meta font-medium text-ink transition-transform active:scale-95"
               >
-                <Avatar name={p.name} size="sm" />
+                <Avatar id={p.memberId} name={p.name} size="sm" />
                 {p.name}
               </button>
             ))}
@@ -734,6 +758,7 @@ function TeamSlots({
             className={`flex w-full items-center gap-2 rounded-xl px-2 py-1.5 text-left transition-colors ${selected ? 'bg-tint ring-2 ring-primary' : locked ? '' : 'hover:bg-fill'}`}
           >
             <Avatar
+              id={id}
               name={player?.name ?? '?'}
               size="sm"
               badge={player && <TierBadge tier={player.tier} />}
@@ -1015,7 +1040,11 @@ function PlayerRow({
       {position !== undefined && (
         <span className="tnum w-5 shrink-0 text-meta font-semibold text-muted">{position}</span>
       )}
-      <Avatar name={name} badge={<TierBadge tier={player.club_members.skill_tier} />} />
+      <Avatar
+        id={player.club_members.id}
+        name={name}
+        badge={<TierBadge tier={player.club_members.skill_tier} />}
+      />
       <div className="min-w-0 flex-1">
         <p className="truncate text-body font-medium text-ink">
           {name}

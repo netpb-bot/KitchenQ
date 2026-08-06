@@ -3,6 +3,7 @@ import { Link } from 'react-router-dom'
 import {
   ChevronRight,
   CalendarDays,
+  Camera,
   ListOrdered,
   Pencil,
   Percent,
@@ -28,6 +29,7 @@ import {
 } from '../lib/db'
 import { playerMatches, standings, type PlayerMatch } from '../lib/standings'
 import { Avatar } from '../components/Avatar'
+import { AvatarPicker } from '../components/AvatarPicker'
 import { MatchResult } from '../components/MatchRow'
 import { RankingNote } from '../components/StandingsList'
 import {
@@ -201,12 +203,30 @@ function ProfileHero({
   record: { games: number; wins: number; losses: number; rate: number } | null
   onChanged: () => void
 }) {
-  const [editing, setEditing] = useState(false)
+  // One panel at a time: the photo cropper and the name form both open in the
+  // same slot, and two of them at once is a card taller than the screen.
+  const [panel, setPanel] = useState<'none' | 'name' | 'photo'>('none')
+  const editing = panel === 'name'
 
   return (
     <DarkCard watermark={Swords}>
       <div className="flex items-center gap-4">
-        <Avatar name={me.display_name} size="xl" />
+        <button
+          type="button"
+          aria-label="Change your profile photo"
+          aria-expanded={panel === 'photo'}
+          onClick={() => setPanel((p) => (p === 'photo' ? 'none' : 'photo'))}
+          className="relative shrink-0 rounded-full transition-transform active:scale-95"
+        >
+          <Avatar id={me.id} name={me.display_name} size="xl" />
+          {/* The glyph is dark on the brand fill, like every `brand` button —
+              written as surface-dark rather than ink because this badge lives
+              inside a DarkCard, where theme.test bans ink outright. Same
+              colour to the eye, and it cannot be copied onto the card itself. */}
+          <span className="absolute -right-0.5 -bottom-0.5 inline-flex h-7 w-7 items-center justify-center rounded-full bg-brand text-surface-dark ring-2 ring-surface-dark">
+            <Camera size={14} strokeWidth={2.5} aria-hidden />
+          </span>
+        </button>
         <div className="min-w-0 flex-1">
           <p className="truncate text-title font-semibold text-white">{me.display_name}</p>
           <div className="mt-2 flex flex-wrap items-center gap-1.5">
@@ -225,7 +245,7 @@ function ProfileHero({
             icon={Pencil}
             className="shrink-0 px-2"
             aria-label="Edit your name and level"
-            onClick={() => setEditing(true)}
+            onClick={() => setPanel('name')}
           />
         )}
       </div>
@@ -233,9 +253,20 @@ function ProfileHero({
       {editing && (
         <SelfEdit
           me={me}
-          onDone={() => setEditing(false)}
+          onDone={() => setPanel('none')}
           onChanged={() => {
-            setEditing(false)
+            setPanel('none')
+            onChanged()
+          }}
+        />
+      )}
+
+      {panel === 'photo' && (
+        <AvatarPicker
+          hasPhoto={Boolean(me.avatar_url)}
+          onDone={() => setPanel('none')}
+          onSaved={() => {
+            setPanel('none')
             onChanged()
           }}
         />
