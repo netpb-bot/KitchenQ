@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from 'react'
 import {
   Flag,
+  Handshake,
   Minus,
   Play,
   Plus,
@@ -15,18 +16,22 @@ import {
   addPlayer,
   cancelMatch,
   isGuest,
+  requestPair,
+  respondPair,
   setCourtCount,
   setPlayerStatus,
   startMatch,
   useAction,
   type Match,
   type Member,
+  type PairRequest,
   type Session,
   type SessionPlayer,
   type SessionStatus,
   type Tier,
 } from '../lib/db'
 import {
+  applyPairs,
   courtFreeAt,
   forecast,
   queueOrder,
@@ -60,6 +65,8 @@ export type LiveData = {
   players: SessionPlayer[]
   matches: Match[]
   clubMembers: Member[]
+  /** Open asks and live pairings. Answered ones are not fetched. */
+  pairRequests: PairRequest[]
 }
 
 export function LiveSession({
@@ -71,8 +78,16 @@ export function LiveSession({
   admin: boolean
   reload: () => void
 }) {
-  const { session, me, players, matches } = data
+  const { session, me, players, matches, pairRequests } = data
   const [adding, setAdding] = useState(false)
+
+  const accepted = useMemo(
+    () =>
+      pairRequests
+        .filter((r) => r.status === 'accepted')
+        .map((r): [string, string] => [r.from_member, r.to_member]),
+    [pairRequests],
+  )
 
   const names = useMemo(
     () => new Map(players.map((p) => [p.club_members.id, p.club_members.display_name])),
@@ -86,18 +101,24 @@ export function LiveSession({
     [players],
   )
 
+  // The one list every position, forecast and lineup on this screen is derived
+  // from — including the queue list itself, which used to build its own and so
+  // could disagree with the courts above it about who was where.
   const waiting: QueuePlayer[] = useMemo(
     () =>
-      players
-        .filter((p) => p.status === 'waiting')
-        .map((p) => ({
-          memberId: p.club_members.id,
-          name: p.club_members.display_name,
-          tier: p.club_members.skill_tier,
-          queuedAt: new Date(p.queued_at).getTime(),
-          gamesPlayed: p.games_played,
-        })),
-    [players],
+      applyPairs(
+        players
+          .filter((p) => p.status === 'waiting')
+          .map((p) => ({
+            memberId: p.club_members.id,
+            name: p.club_members.display_name,
+            tier: p.club_members.skill_tier,
+            queuedAt: new Date(p.queued_at).getTime(),
+            gamesPlayed: p.games_played,
+          })),
+        accepted,
+      ),
+    [players, accepted],
   )
 
   const live = useMemo(() => matches.filter((m) => !m.ended_at), [matches])
@@ -160,6 +181,15 @@ export function LiveSession({
     ? (plan.courts.find((c) => everyone(c.lineup).includes(me.id)) ?? null)
     : null
 
+  const myPair = useMemo(
+    () =>
+      pairRequests.find(
+        (r) =>
+          r.status === 'accepted' && (r.from_member === me?.id || r.to_member === me?.id),
+      ) ?? null,
+    [pairRequests, me],
+  )
+
   return (
     <>
       {mine && (
@@ -171,6 +201,7 @@ export function LiveSession({
           onCourtAt={(me && plan.onCourtAt.get(me.id)) ?? null}
           now={now}
           names={names}
+          pair={myPair}
           reload={reload}
         />
       )}
@@ -212,10 +243,19 @@ export function LiveSession({
 
       <Queue
         players={players}
+        order={waiting}
         me={me}
         admin={admin}
         adding={adding}
         waits={waits}
+        sessionId={session.id}
+        requests={pairRequests}
+        // You have to be in the queue yourself to ask, and one arrangement at a
+        // time. Both are refused server-side too; hiding the control just saves
+        // everyone the error.
+        canAsk={
+          session.status === 'live' && mine?.status === 'waiting' && myPair === null
+        }
         onToggleAdd={() => setAdding((open) => !open)}
         reload={reload}
       />
@@ -411,6 +451,7 @@ function LiveCourt({
         <CourtDiagram
           teamA={match.team_a_ids.map(onCourt)}
           teamB={match.team_b_ids.map(onCourt)}
+          meId={meId}
         />
       </div>
 
@@ -777,19 +818,29 @@ function TeamSlots({
 
 function Queue({
   players,
+  order: queue,
   me,
   admin,
   adding,
   waits,
+  sessionId,
+  requests,
+  canAsk,
   onToggleAdd,
   reload,
 }: {
   players: SessionPlayer[]
+  /** The waiting players as the matchmaker sees them, pairings already folded in. */
+  order: QueuePlayer[]
   me: Member | null
   admin: boolean
   adding: boolean
   /** Wait label per club_members.id. Missing = nothing worth guessing. */
   waits: Map<string, string>
+  sessionId: string
+  requests: PairRequest[]
+  /** Whether the viewer is in a position to ask anyone at all. */
+  canAsk: boolean
   onToggleAdd: () => void
   reload: () => void
 }) {
@@ -798,16 +849,10 @@ function Queue({
   const resting = players.filter((p) => p.status === 'resting')
   const playing = players.filter((p) => p.status === 'playing')
 
-  const order = queueOrder(
-    waiting.map((p) => ({
-      memberId: p.id, // ordering only — the session_player id is enough here
-      name: p.club_members.display_name,
-      tier: p.club_members.skill_tier,
-      queuedAt: new Date(p.queued_at).getTime(),
-      gamesPlayed: p.games_played,
-    })),
-  )
-  const byId = new Map(waiting.map((p) => [p.id, p]))
+  // Ordered by the same list the courts above were filled from, keyed by
+  // club_members.id so a pairing means the same thing here as it does there.
+  const order = queueOrder(queue)
+  const byId = new Map(waiting.map((p) => [p.club_members.id, p]))
 
   // Who's next is the question this list answers; the twenty-second person in
   // line is not part of the answer. SelfStatus above the courts already reports
@@ -858,6 +903,10 @@ function Queue({
                 isMe={player.club_members.id === me?.id}
                 admin={admin}
                 wait={waits.get(player.club_members.id)}
+                partnerName={
+                  entry.partnerId ? byId.get(entry.partnerId)?.club_members.display_name : undefined
+                }
+                pair={{ sessionId, requests, meId: me?.id ?? null, canAsk }}
                 onRemoved={setRemoved}
                 reload={reload}
               />
@@ -922,6 +971,7 @@ function SelfStatus({
   onCourtAt,
   now,
   names,
+  pair,
   reload,
 }: {
   player: SessionPlayer
@@ -933,6 +983,8 @@ function SelfStatus({
   onCourtAt: number | null
   now: number
   names: Map<string, string>
+  /** Your accepted pairing, if you have one. */
+  pair: PairRequest | null
   reload: () => void
 }) {
   const [busy, error, run] = useAction()
@@ -941,6 +993,12 @@ function SelfStatus({
       await setPlayerStatus(player.id, next)
       reload()
     })
+
+  const partnerId = pair
+    ? pair.from_member === player.club_members.id
+      ? pair.to_member
+      : pair.from_member
+    : null
 
   // Queue position means nothing until play starts — nobody is 1st in line for a
   // match that cannot be called yet. Sitting out still can be: arriving and not
@@ -1004,7 +1062,55 @@ function SelfStatus({
           {matchup(upNext.lineup, player.club_members.id, names)}
         </p>
       )}
+      {pair && !over && (
+        <PairedNote
+          request={pair}
+          partner={(partnerId && names.get(partnerId)) || 'your partner'}
+          reload={reload}
+        />
+      )}
       {error && <p className="mt-1 text-meta font-medium text-danger">{error}</p>}
+    </div>
+  )
+}
+
+/**
+ * Your live pairing, and the way out of it.
+ *
+ * Whichever of you is further back sets the position for both, so the one who
+ * gave up their place should be able to see that they did and take it back.
+ */
+function PairedNote({
+  request,
+  partner,
+  reload,
+}: {
+  request: PairRequest
+  partner: string
+  reload: () => void
+}) {
+  const [busy, error, run] = useAction()
+
+  return (
+    <div className="mt-1.5 flex flex-wrap items-center gap-x-2 gap-y-1">
+      <Handshake size={15} className="shrink-0 text-primary/75" aria-hidden />
+      <p className="min-w-0 flex-1 text-meta text-primary/75">
+        Paired with {partner} for your next game
+      </p>
+      <Button
+        variant="ghost"
+        size="sm"
+        loading={busy}
+        onClick={() =>
+          run(async () => {
+            await respondPair(request.id, 'cancelled')
+            reload()
+          })
+        }
+      >
+        Unpair
+      </Button>
+      {error && <p className="w-full text-meta font-medium text-danger">{error}</p>}
     </div>
   )
 }
@@ -1014,12 +1120,22 @@ function ordinal(n: number): string {
   return `${n}${suffix}`
 }
 
+/** What a row needs to offer, or not offer, the "play with" control. */
+type PairContext = {
+  sessionId: string
+  requests: PairRequest[]
+  meId: string | null
+  canAsk: boolean
+}
+
 function PlayerRow({
   player,
   position,
   isMe,
   admin,
   wait,
+  partnerName,
+  pair,
   onRemoved,
   reload,
 }: {
@@ -1029,6 +1145,10 @@ function PlayerRow({
   admin: boolean
   /** "up next" or "~9 min". Absent for anyone not waiting on a court. */
   wait?: string
+  /** Set when this player has an accepted pairing with someone also waiting. */
+  partnerName?: string
+  /** Absent on the sitting-out list, where there is nobody to ask. */
+  pair?: PairContext
   onRemoved: (removed: { id: string; name: string }) => void
   reload: () => void
 }) {
@@ -1054,8 +1174,11 @@ function PlayerRow({
           {player.games_played} {player.games_played === 1 ? 'game' : 'games'} ·{' '}
           {TIER_LABEL[player.club_members.skill_tier]}
           {wait && <span className="font-medium text-primary"> · {wait}</span>}
+          {partnerName && <span className="text-primary"> · with {partnerName}</span>}
         </p>
       </div>
+
+      {pair && <PairButton player={player} isMe={isMe} pair={pair} reload={reload} />}
 
       {/* A guest has no phone, so the host does everything for them. */}
       {isGuest(player.club_members) && <Pill tone="neutral">Guest</Pill>}
@@ -1083,6 +1206,79 @@ function PlayerRow({
         />
       )}
     </div>
+  )
+}
+
+/**
+ * "Play with" on somebody else's row, and the way to take it back.
+ *
+ * Deliberately quiet: it repeats down a list of twenty, and the queue's job is
+ * still to tell you where you stand, not to sell you a favour.
+ */
+function PairButton({
+  player,
+  isMe,
+  pair,
+  reload,
+}: {
+  player: SessionPlayer
+  isMe: boolean
+  pair: PairContext
+  reload: () => void
+}) {
+  const [busy, error, run] = useAction()
+  const them = player.club_members.id
+
+  const asked = pair.requests.find(
+    (r) => r.status === 'pending' && r.from_member === pair.meId && r.to_member === them,
+  )
+
+  // Someone already spoken for cannot be asked, and the server would refuse it
+  // anyway. A guest has no account to answer with.
+  const spokenFor = pair.requests.some(
+    (r) => r.status === 'accepted' && (r.from_member === them || r.to_member === them),
+  )
+
+  if (isMe || !pair.meId) return null
+
+  if (asked) {
+    return (
+      <Button
+        variant="ghost"
+        size="sm"
+        loading={busy}
+        title={error ?? undefined}
+        onClick={() =>
+          run(async () => {
+            await respondPair(asked.id, 'cancelled')
+            reload()
+          })
+        }
+      >
+        Asked · undo
+      </Button>
+    )
+  }
+
+  if (!pair.canAsk || spokenFor || isGuest(player.club_members)) return null
+
+  return (
+    <Button
+      variant="ghost"
+      size="sm"
+      icon={Handshake}
+      loading={busy}
+      title={error ?? undefined}
+      aria-label={`Ask ${player.club_members.display_name} to play with you`}
+      onClick={() =>
+        run(async () => {
+          await requestPair(pair.sessionId, them)
+          reload()
+        })
+      }
+    >
+      Play with
+    </Button>
   )
 }
 

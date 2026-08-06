@@ -10,6 +10,7 @@ import {
   ImagePlus,
   LayoutGrid,
   Pencil,
+  QrCode,
   RotateCcw,
   Share2,
   Sparkles,
@@ -23,9 +24,11 @@ import {
   getClub,
   getSession,
   isAdmin,
+  joinUrl,
   listLedger,
   listMatches,
   listMembers,
+  listPairRequests,
   listSessionPlayers,
   myMember,
   reopenSession,
@@ -47,6 +50,7 @@ import { ConnectionBanner, isUnreachable } from '../components/ConnectionBanner'
 import { FeeSheet } from '../components/FeeSheet'
 import { LiveSession, type LiveData } from '../components/LiveSession'
 import { MatchResult } from '../components/MatchRow'
+import { PairInbox } from '../components/PairInbox'
 import { RankingNote, StandingsList } from '../components/StandingsList'
 import { ScoreEntry } from '../components/ScoreEntry'
 import { Avatar } from '../components/Avatar'
@@ -83,7 +87,7 @@ function useSessionView(): [
 
   const [view, reload] = useAsync(async (): Promise<View> => {
     const session = await getSession(id)
-    const [me, players, matches, clubMembers, club, ledger] = await Promise.all([
+    const [me, players, matches, clubMembers, club, ledger, pairRequests] = await Promise.all([
       myMember(session.club_id),
       listSessionPlayers(id),
       listMatches(id),
@@ -92,8 +96,9 @@ function useSessionView(): [
       // who hasn't joined yet. Its currency is a nicety; the screen is not.
       getClub(session.club_id).catch(() => null),
       listLedger(id),
+      listPairRequests(id),
     ])
-    return { session, me, players, matches, clubMembers, club, ledger }
+    return { session, me, players, matches, clubMembers, club, ledger, pairRequests }
   }, [id])
 
   useEffect(() => watchSession(id, reload, setConnection), [id])
@@ -142,6 +147,12 @@ function SessionScreen({
         <>
           <SessionHeader view={view.data!} reload={reload} />
           <ConnectionBanner state={connection} />
+          <PairInbox
+            requests={view.data!.pairRequests}
+            players={view.data!.players}
+            me={view.data!.me}
+            reload={reload}
+          />
           {children(view.data!, reload)}
         </>
       )}
@@ -223,7 +234,12 @@ function SessionHeader({ view, reload }: { view: View; reload: () => void }) {
           )}
           <p className="mt-2.5 truncate text-title font-semibold text-white">{session.name}</p>
         </div>
-        <ShareCode code={session.join_code} />
+        {/* Two ways to hand out the same link: one to send it somewhere, one to
+            hold up at the net post. */}
+        <div className="flex shrink-0 items-stretch gap-2">
+          <ShareCode code={session.join_code} />
+          <ShowQr sessionId={session.id} />
+        </div>
       </div>
 
       <div className="mt-5 grid grid-cols-4 gap-2 border-t border-white/10 pt-5">
@@ -422,7 +438,7 @@ async function shareLink(url: string, title: string): Promise<'shared' | 'copied
 
 function ShareCode({ code }: { code: string }) {
   const [result, setResult] = useState<'copied' | 'failed' | null>(null)
-  const url = `${location.origin}/join?code=${code}`
+  const url = joinUrl(code)
 
   async function share() {
     const outcome = await shareLink(url, 'Join our pickleball session')
@@ -459,6 +475,22 @@ function ShareCode({ code }: { code: string }) {
             : ''}
       </span>
     </button>
+  )
+}
+
+/**
+ * ponytail: not gated on admin. The share button beside it is ungated and hands
+ * out the identical URL, so a role check here would guard nothing.
+ */
+function ShowQr({ sessionId }: { sessionId: string }) {
+  return (
+    <Link
+      to={`/session/${sessionId}/qr`}
+      aria-label="Show a QR code for players to scan"
+      className="flex min-h-11 shrink-0 items-center rounded-xl bg-fill-on-dark px-3 text-white/75 ring-1 ring-white/10 transition-colors active:scale-95 md:hover:bg-fill-on-dark-strong"
+    >
+      <QrCode size={20} aria-hidden />
+    </Link>
   )
 }
 
@@ -645,7 +677,7 @@ function Recap({ view, table }: { view: View; table: Standing[] }) {
                 className="absolute -top-3 -left-1 -rotate-12 text-warn-fill"
                 fill="currentColor"
               />
-              <Avatar id={winner.memberId} name={winner.name} size="lg" ring />
+              <Avatar id={winner.memberId} name={winner.name} size="lg" ring="page" />
             </span>
             <div className="min-w-0 flex-1">
               <Pill tone="neutral">#1</Pill>

@@ -20,6 +20,7 @@ import { ClubDetail } from './routes/ClubDetail'
 import { Join } from './routes/Join'
 import { Profile } from './routes/Profile'
 import { SessionFees, SessionLive, SessionStandings } from './routes/SessionScreens'
+import { SessionQr } from './routes/SessionQr'
 
 export default function App() {
   if (!isConfigured) return <SetupNeeded />
@@ -45,6 +46,11 @@ function Router() {
           <Route path="/join" element={<Join />} />
           <Route path="/profile" element={<Profile />} />
         </Route>
+
+        {/* Held up for players to scan, so it gets the whole viewport — outside
+            both layouts on purpose, since a tab bar under a QR code steals room
+            from the one thing on the screen and highlights nothing. */}
+        <Route path="/session/:sessionId/qr" element={<SessionQr />} />
 
         {/* Session level — owns the screen, with its own tab bar. Fees has no
             tab: it is reached from the session header. */}

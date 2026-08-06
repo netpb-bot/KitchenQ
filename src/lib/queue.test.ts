@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import {
+  applyPairs,
   courtFreeAt,
   forecast,
   pickNextMatch,
@@ -148,6 +149,140 @@ describe('a full session rotates fairly', () => {
 
   it('nobody sits out two rounds while somebody else plays twice', () => {
     const played = playNight(9, 2, 15).map((p) => p.gamesPlayed)
+    expect(Math.max(...played) - Math.min(...played)).toBeLessThanOrEqual(1)
+  })
+})
+
+/**
+ * Two players agreeing to partner up. The rule that has to hold under all of
+ * this: pairing can cost you your place in line, and can never buy you one.
+ */
+describe('pairing up', () => {
+  const partnered = (lineup: { teamA: string[]; teamB: string[] }, a: string, b: string) =>
+    (lineup.teamA.includes(a) && lineup.teamA.includes(b)) ||
+    (lineup.teamB.includes(a) && lineup.teamB.includes(b))
+
+  it('puts partners on the same team', () => {
+    // p0/p2 is deliberately not the split the engine reaches for on its own —
+    // with four interchangeable players it cuts them p0+p1 against p2+p3.
+    expect(partnered(pickNextMatch(roster(4))!, 'p0', 'p2')).toBe(false)
+
+    const players = applyPairs(roster(4), [['p0', 'p2']])
+    expect(partnered(pickNextMatch(players)!, 'p0', 'p2')).toBe(true)
+  })
+
+  it('keeps them together against the balance the engine would otherwise want', () => {
+    const players = applyPairs(
+      [
+        player('strong1', { tier: 'advanced', queuedAt: 0 }),
+        player('strong2', { tier: 'advanced', queuedAt: 1 }),
+        player('new1', { tier: 'beginner', queuedAt: 2 }),
+        player('new2', { tier: 'beginner', queuedAt: 3 }),
+      ],
+      [['strong1', 'strong2']],
+    )
+    expect(partnered(pickNextMatch(players)!, 'strong1', 'strong2')).toBe(true)
+  })
+
+  // The whole point of taking the later of the two positions.
+  it('drops the fresher player back to their partner, never the reverse', () => {
+    const paired = applyPairs(
+      [player('fresh', { gamesPlayed: 0, queuedAt: 0 }), player('busy', { gamesPlayed: 2, queuedAt: 90 })],
+      [['fresh', 'busy']],
+    )
+    expect(paired.map((p) => p.gamesPlayed)).toEqual([2, 2])
+    expect(paired.map((p) => p.queuedAt)).toEqual([90, 90])
+  })
+
+  it('does not let a pair jump the queue past somebody with fewer games', () => {
+    const players = applyPairs(
+      [
+        player('fresh', { gamesPlayed: 0, queuedAt: 0 }),
+        player('busy', { gamesPlayed: 2, queuedAt: 0 }),
+        ...roster(4).map((p) => ({ ...p, gamesPlayed: 1, queuedAt: 10 })),
+      ],
+      [['fresh', 'busy']],
+    )
+    // 'fresh' had the strongest claim on court and gave it up; the four players
+    // on one game go on ahead of both of them.
+    const picked = everyone(pickNextMatch(players)!)
+    expect(picked).not.toContain('fresh')
+    expect(picked).not.toContain('busy')
+  })
+
+  it('never takes one half of a pair and leaves the other waiting', () => {
+    // Three required, one slot free, and the pair is competing for it. Taking
+    // either one alone is the failure this guards.
+    const players = applyPairs(
+      [
+        ...roster(3).map((p) => ({ ...p, gamesPlayed: 0 })),
+        player('a', { gamesPlayed: 1, queuedAt: 5 }),
+        player('b', { gamesPlayed: 1, queuedAt: 6 }),
+        player('solo', { gamesPlayed: 1, queuedAt: 7 }),
+      ],
+      [['a', 'b']],
+    )
+    const picked = everyone(pickNextMatch(players)!)
+    expect(picked.includes('a')).toBe(picked.includes('b'))
+    expect(picked).toContain('solo')
+  })
+
+  // A court standing empty is worse for everyone than an arrangement waiting
+  // one more round.
+  it('starts the match anyway when the pair cannot be fitted', () => {
+    const players = applyPairs(
+      [
+        ...roster(3).map((p) => ({ ...p, gamesPlayed: 0 })),
+        player('a', { gamesPlayed: 1, queuedAt: 5 }),
+        player('b', { gamesPlayed: 1, queuedAt: 6 }),
+      ],
+      [['a', 'b']],
+    )
+    const lineup = pickNextMatch(players)
+    expect(lineup).not.toBeNull()
+    expect(everyone(lineup!)).toHaveLength(4)
+  })
+
+  it('ignores a pairing whose other half is not in the queue', () => {
+    const players = applyPairs(roster(4), [['p0', 'gone']])
+    expect(players.every((p) => p.partnerId === undefined)).toBe(true)
+  })
+
+  it('sorts partners next to each other even on identical timestamps', () => {
+    // end_match stamps one queued_at across all four players of a match, so
+    // exact ties are the normal case rather than a contrived one.
+    const tied = [
+      player('zz', { queuedAt: 100 }),
+      player('mm', { queuedAt: 100 }),
+      player('aa', { queuedAt: 100 }),
+    ]
+    const order = queueOrder(applyPairs(tied, [['zz', 'aa']])).map((p) => p.memberId)
+    expect(Math.abs(order.indexOf('zz') - order.indexOf('aa'))).toBe(1)
+  })
+
+  it('still rotates everyone fairly with a pair in the queue all night', () => {
+    let players = applyPairs(roster(9), [['p0', 'p8']])
+    const history: PastMatch[] = []
+    let clock = 1000
+
+    for (let round = 0; round < 20; round++) {
+      const lineup = pickNextMatch(players, history)
+      if (!lineup) break
+      const onCourt = new Set(everyone(lineup))
+      history.unshift(lineup)
+      players = players.map((p) =>
+        onCourt.has(p.memberId)
+          ? { ...p, gamesPlayed: p.gamesPlayed + 1, queuedAt: ++clock }
+          : p,
+      )
+      // The pairing is spent after one game, exactly as end_match clears it.
+      players = applyPairs(
+        players.map(({ partnerId: _, ...p }) => p),
+        onCourt.has('p0') && onCourt.has('p8') ? [] : [['p0', 'p8']],
+      )
+    }
+
+    const played = players.map((p) => p.gamesPlayed)
     expect(Math.max(...played) - Math.min(...played)).toBeLessThanOrEqual(1)
   })
 })

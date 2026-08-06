@@ -10,6 +10,12 @@
  *
  * Balance and variety then decide freely *within* a tier, where every candidate
  * has an equal claim to the court.
+ *
+ * The one thing that moves a player out of tier order is their own decision:
+ * two players who agree to partner up both drop to the later of their two
+ * positions (see `applyPairs`). That only ever gives a place away, so the
+ * guarantee above survives — it just becomes "nobody is put behind someone with
+ * more games unless they asked to be".
  */
 
 import type { Tier } from './db'
@@ -22,6 +28,11 @@ export type QueuePlayer = {
   /** Epoch ms. Set on join, bumped each time the player finishes a match. */
   queuedAt: number
   gamesPlayed: number
+  /**
+   * club_members.id of an accepted partner, who is also waiting and points
+   * back. Set by `applyPairs`; absent for everyone playing on their own.
+   */
+  partnerId?: string
 }
 
 export type PastMatch = { teamA: string[]; teamB: string[] }
@@ -52,10 +63,68 @@ const WEIGHT = {
   repeat: 8,
 } as const
 
+/**
+ * Fold accepted pairings into the queue.
+ *
+ * Both partners take the worse of the two positions — the higher games-played
+ * and the later queued-at — so agreeing to play together can only ever cost you
+ * your own place in line, never buy you someone else's. Landing them on the
+ * same games-played number is also what keeps them in the same tier, and a pair
+ * that spans two tiers is a pair `selectionPool` would have to split.
+ *
+ * A pairing whose other half is on court, sitting out or gone home is dropped
+ * here rather than tracked: they are simply not in `waiting`, so the
+ * arrangement lies dormant until they come back, at no cost to anyone.
+ */
+export function applyPairs(
+  waiting: QueuePlayer[],
+  pairs: [string, string][],
+): QueuePlayer[] {
+  const byId = new Map(waiting.map((p) => [p.memberId, p]))
+  const paired = new Map<string, QueuePlayer>()
+
+  for (const [a, b] of pairs) {
+    const one = byId.get(a)
+    const two = byId.get(b)
+    // The database allows a player only one accepted pairing at a time; the
+    // `paired.has` guard is for a client holding a stale read of two.
+    if (!one || !two || paired.has(a) || paired.has(b)) continue
+
+    const gamesPlayed = Math.max(one.gamesPlayed, two.gamesPlayed)
+    const queuedAt = Math.max(one.queuedAt, two.queuedAt)
+    paired.set(a, { ...one, gamesPlayed, queuedAt, partnerId: b })
+    paired.set(b, { ...two, gamesPlayed, queuedAt, partnerId: a })
+  }
+
+  if (paired.size === 0) return waiting
+  return waiting.map((p) => paired.get(p.memberId) ?? p)
+}
+
+/**
+ * The id a player sorts under once ties are reached — their partner's or their
+ * own, whichever is lower, so a pair shares one and lands adjacent.
+ *
+ * Adjacency is not free from equal keys alone: `end_match` stamps the same
+ * `queued_at` on all four players of a finished match in one statement, so
+ * exact ties are routine rather than a curiosity.
+ */
+function anchor(p: QueuePlayer): string {
+  if (!p.partnerId) return p.memberId
+  return p.memberId < p.partnerId ? p.memberId : p.partnerId
+}
+
+function compareIds(a: string, b: string): number {
+  return a < b ? -1 : a > b ? 1 : 0
+}
+
 /** Sorted by who most deserves the next game: fewest games, then longest wait. */
 export function queueOrder(players: QueuePlayer[]): QueuePlayer[] {
   return [...players].sort(
-    (a, b) => a.gamesPlayed - b.gamesPlayed || a.queuedAt - b.queuedAt,
+    (a, b) =>
+      a.gamesPlayed - b.gamesPlayed ||
+      a.queuedAt - b.queuedAt ||
+      compareIds(anchor(a), anchor(b)) ||
+      compareIds(a.memberId, b.memberId),
   )
 }
 
@@ -100,21 +169,35 @@ export function pickNextMatch(
   const penalties = repeatPenalties(recent.slice(0, RECENT_DEPTH))
   const waitRank = new Map(queue.map((p, i) => [p.memberId, i]))
 
-  let best: Lineup | null = null
-  let bestCost = Infinity
+  const search = (respectPairs: boolean): Lineup | null => {
+    let best: Lineup | null = null
+    let bestCost = Infinity
 
-  for (const fill of combinations(choosable, slots)) {
-    const four = [...required, ...fill]
-    for (const lineup of pairings(four)) {
-      const cost = lineupCost(lineup, four, waitRank, penalties)
-      if (cost < bestCost) {
-        bestCost = cost
-        best = lineup
+    for (const fill of combinations(choosable, slots)) {
+      const four = [...required, ...fill]
+      if (respectPairs && !intact(four)) continue
+      for (const lineup of pairings(four, respectPairs)) {
+        const cost = lineupCost(lineup, four, waitRank, penalties)
+        if (cost < bestCost) {
+          bestCost = cost
+          best = lineup
+        }
       }
     }
+
+    return best
   }
 
-  return best
+  // An odd number of open slots can leave a pair with nowhere to fit. A court
+  // standing empty is worse for everyone than an arrangement going unhonoured
+  // for one round, so the second pass drops the constraint entirely.
+  return search(true) ?? search(false)
+}
+
+/** True unless the four holds one half of a pair and not the other. */
+function intact(four: QueuePlayer[]): boolean {
+  const ids = new Set(four.map((p) => p.memberId))
+  return four.every((p) => !p.partnerId || ids.has(p.partnerId))
 }
 
 /* ----------------------------------------------------------------- forecast */
@@ -287,14 +370,35 @@ function pairKey(a: string, b: string): string {
 
 /* ------------------------------------------------------------ combinatorics */
 
-/** The three ways to split four players into two pairs. */
-function pairings(four: QueuePlayer[]): Lineup[] {
+/**
+ * The three ways to split four players into two pairs, minus any that would put
+ * partners across the net from each other.
+ *
+ * With one accepted pair among the four exactly one split survives, which is
+ * the whole guarantee the two of them agreed to.
+ */
+function pairings(four: QueuePlayer[], respectPairs = true): Lineup[] {
   const [w, x, y, z] = four.map((p) => p.memberId)
-  return [
+  const all: Lineup[] = [
     { teamA: [w, x], teamB: [y, z] },
     { teamA: [w, y], teamB: [x, z] },
     { teamA: [w, z], teamB: [x, y] },
   ]
+  if (!respectPairs) return all
+
+  const ids = new Set(four.map((p) => p.memberId))
+  const partners = new Map(
+    four
+      .filter((p) => p.partnerId && ids.has(p.partnerId))
+      .map((p) => [p.memberId, p.partnerId!]),
+  )
+  if (partners.size === 0) return all
+
+  return all.filter((lineup) =>
+    [lineup.teamA, lineup.teamB].every(
+      ([a, b]) => (partners.get(a) ?? b) === b && (partners.get(b) ?? a) === a,
+    ),
+  )
 }
 
 function* combinations<T>(items: T[], size: number): Generator<T[]> {

@@ -44,6 +44,13 @@ const SIZES = {
   xl: 'h-20 w-20 text-display',
 } as const
 
+// Named rather than interpolated: Tailwind scans for whole class strings, so a
+// `ring-${colour}` built at runtime never gets emitted.
+const RINGS = {
+  page: 'ring-2 ring-page',
+  surface: 'ring-2 ring-surface',
+} as const
+
 export function Avatar({
   name,
   id,
@@ -55,8 +62,9 @@ export function Avatar({
   /** The club_members id, if this is a real member — that's what has a photo. */
   id?: string
   size?: keyof typeof SIZES
-  /** Draws a page-coloured ring, for avatars overlapping other elements. */
-  ring?: boolean
+  /** A ring in the colour of whatever this avatar overlaps, so it stays cut out
+      of it: `page` on a page-coloured backdrop, `surface` on the court. */
+  ring?: keyof typeof RINGS
   /** Overlaps the bottom-right — a TierBadge on the queue and the court. */
   badge?: ReactNode
 }) {
@@ -71,7 +79,7 @@ export function Avatar({
 
   const circle = (
     <span
-      className={`inline-flex shrink-0 items-center justify-center overflow-hidden rounded-full font-semibold text-white ${SIZES[size]} ${ring ? 'ring-2 ring-page' : ''}`}
+      className={`inline-flex shrink-0 items-center justify-center overflow-hidden rounded-full font-semibold text-white ${SIZES[size]} ${ring ? RINGS[ring] : ''}`}
       style={{ backgroundColor: avatarColor(name) }}
       aria-hidden
     >

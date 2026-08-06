@@ -76,6 +76,18 @@ export type Match = {
   ended_at: string | null
 }
 
+export type PairStatus = 'pending' | 'accepted' | 'declined' | 'cancelled' | 'consumed'
+
+/** One player asking another to partner up, from the ask to the game they got. */
+export type PairRequest = {
+  id: string
+  session_id: string
+  from_member: string
+  to_member: string
+  status: PairStatus
+  created_at: string
+}
+
 export type PaymentStatus = 'unpaid' | 'partial' | 'paid'
 
 export type LedgerEntry = {
@@ -548,6 +560,41 @@ export async function addPlayer(sessionId: string, clubMemberId: string): Promis
   )
 }
 
+/* ------------------------------------------------------------ pair requests */
+
+/**
+ * The open asks and live pairings for a session.
+ *
+ * Answered rows are left behind deliberately — a declined ask that stayed on
+ * screen would be a small public humiliation, and one that had to be dismissed
+ * would be a chore. Only the two live states are fetched.
+ */
+export async function listPairRequests(sessionId: string): Promise<PairRequest[]> {
+  await ensureSession()
+  return ok(
+    await supabase
+      .from('pair_requests')
+      .select('id, session_id, from_member, to_member, status, created_at')
+      .eq('session_id', sessionId)
+      .in('status', ['pending', 'accepted'])
+      .order('created_at'),
+  )
+}
+
+export async function requestPair(sessionId: string, memberId: string): Promise<string> {
+  return ok(
+    await supabase.rpc('request_pair', {
+      target_session: sessionId,
+      target_member: memberId,
+    }),
+  )
+}
+
+/** Accept, decline or call off an ask. The server decides which you may do. */
+export async function respondPair(requestId: string, next: PairStatus): Promise<void> {
+  ok(await supabase.rpc('respond_pair', { target_request: requestId, next_status: next }))
+}
+
 /* ------------------------------------------------------------------ matches */
 
 const MATCH_COLS =
@@ -744,6 +791,7 @@ export function watchSession(
     .on('postgres_changes', { event: '*', schema: 'public', table: 'session_players', filter }, changed)
     .on('postgres_changes', { event: '*', schema: 'public', table: 'matches', filter }, changed)
     .on('postgres_changes', { event: '*', schema: 'public', table: 'ledger_entries', filter }, changed)
+    .on('postgres_changes', { event: '*', schema: 'public', table: 'pair_requests', filter }, changed)
     .on('postgres_changes', { event: '*', schema: 'public', table: 'sessions', filter: `id=eq.${sessionId}` }, changed)
     .subscribe((status) => {
       if (status === 'SUBSCRIBED') {
@@ -820,6 +868,17 @@ export function useAction(): [boolean, string, (work: () => Promise<unknown>) =>
   }
 
   return [busy, error, run]
+}
+
+/**
+ * The link behind the share sheet and the QR code. Join reads `?code=` back out
+ * and prefills it, so a scanner only has a name left to type.
+ *
+ * The origin is a parameter rather than read inside so this is callable without
+ * a DOM — the tests run in node.
+ */
+export function joinUrl(code: string, origin = location.origin): string {
+  return `${origin}/join?code=${encodeURIComponent(code)}`
 }
 
 /** The player's own name, remembered so joining a second session is one tap. */

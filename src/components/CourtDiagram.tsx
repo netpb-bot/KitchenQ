@@ -1,5 +1,6 @@
-import { avatarColor, initials } from './Avatar'
-import { TIER_SHORT, photoOf, type Tier } from '../lib/db'
+import { useId } from 'react'
+import { Avatar, TierBadge } from './Avatar'
+import type { Tier } from '../lib/db'
 import { palette } from '../theme'
 
 /**
@@ -8,6 +9,14 @@ import { palette } from '../theme'
  * Proportions are the real ones — 44ft by 20ft, with a 7ft non-volley zone
  * ("the kitchen") either side of the net — so the shape reads as a pickleball
  * court from across a gym rather than as a generic rectangle.
+ *
+ * The players are HTML laid over the SVG, not drawn inside it. Names have to
+ * sit with their own circle — a caption row under the court made people match
+ * initials back to avatars, which two players sharing a first letter makes
+ * impossible — and SVG text cannot truncate, so a long name inside the viewBox
+ * either overflows the court or gets chopped at a character count. As a side
+ * effect this reuses <Avatar>, which handles a photo URL that 404s; the SVG
+ * <image> it replaces had no such fallback and rendered a broken glyph.
  */
 
 const FEET_LONG = 44
@@ -26,6 +35,7 @@ export type CourtSide = { name: string; id?: string; tier?: Tier }[]
 export function CourtDiagram({
   teamA,
   teamB,
+  meId,
   className = '',
   muted,
 }: {
@@ -33,27 +43,45 @@ export function CourtDiagram({
   teamA: CourtSide
   /** Right half. */
   teamB: CourtSide
+  /** The viewer's club_members.id, so their own spot can say so. */
+  meId?: string | null
   className?: string
   /** Faded, for a court standing empty. */
   muted?: boolean
 }) {
   const empty = teamA.length === 0 && teamB.length === 0
+  // Several courts render on one screen, so the clip path needs an id per card.
+  const clip = useId()
+
   return (
-    <div className={className}>
+    <div className={`relative ${className}`}>
       <svg
         viewBox={`0 0 ${W} ${H}`}
-        className={`w-full ${muted ? 'opacity-45' : ''}`}
-        role="img"
-        aria-label={
-          empty
-            ? 'Empty court'
-            : `${teamA.map((p) => p.name).join(' and ')} versus ${teamB
-                .map((p) => p.name)
-                .join(' and ')}`
-        }
+        className={`block w-full ${muted ? 'opacity-45' : ''}`}
+        role={empty ? 'img' : undefined}
+        aria-label={empty ? 'Empty court' : undefined}
+        aria-hidden={empty ? undefined : true}
       >
+        <defs>
+          <clipPath id={clip}>
+            <rect x="0" y="0" width={W} height={H} rx="6" />
+          </clipPath>
+        </defs>
+
         {/* Playing surface */}
         <rect x="0" y="0" width={W} height={H} rx="6" fill={palette.tint} />
+
+        {/* Team zones: partners share a wash, so "who is with whom" is answered
+            before a single name is read. Alpha over the surface rather than two
+            new palette entries — nothing carries text directly on these (every
+            name sits on its own plate), so there is no new contrast pair.
+            Clipped, because square corners would poke out of the rounded court. */}
+        {!empty && (
+          <g clipPath={`url(#${clip})`}>
+            <rect x="0" y="0" width={NET} height={H} fill={palette.brand} opacity="0.1" />
+            <rect x={NET} y="0" width={NET} height={H} fill={palette.ink} opacity="0.045" />
+          </g>
+        )}
 
         {/* Court lines are white, as they are on a real court: they separate the
             surface from the card without adding another grey to the palette. */}
@@ -85,115 +113,82 @@ export function CourtDiagram({
           stroke={palette.hairline}
           strokeWidth="1.5"
         />
-
-        {teamA.map((player, i) => (
-          <PlayerMark
-            key={`a${i}`}
-            player={player}
-            x={NET / 2}
-            y={i === 0 ? H * 0.29 : H * 0.71}
-          />
-        ))}
-        {teamB.map((player, i) => (
-          <PlayerMark
-            key={`b${i}`}
-            player={player}
-            x={NET + NET / 2}
-            y={i === 0 ? H * 0.29 : H * 0.71}
-          />
-        ))}
       </svg>
 
-      {/* Names live in HTML, not SVG: the bottom row used to be drawn below the
-          viewBox and got clipped, and SVG text cannot ellipsize — so long names
-          were chopped at a fixed character count. `truncate` does both properly.
-          aria-hidden because the svg's label already reads the full roster. */}
       {!empty && (
-        <div className="mt-2 grid grid-cols-2 gap-3" aria-hidden>
-          <p className="truncate text-center text-meta font-medium text-ink">{firstNames(teamA)}</p>
-          <p className="truncate text-center text-meta font-medium text-ink">{firstNames(teamB)}</p>
-        </div>
+        <>
+          <div className="absolute inset-0 grid grid-cols-2" aria-hidden>
+            <TeamHalf side={teamA} meId={meId} />
+            <TeamHalf side={teamB} meId={meId} />
+          </div>
+
+          {/* On the net, where the two teams meet. Half the reason the zones
+              read as two teams rather than as a gradient. */}
+          <span
+            aria-hidden
+            className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 rounded-full bg-surface px-1.5 py-0.5 text-[9px] font-bold tracking-[0.08em] text-muted uppercase shadow-card"
+          >
+            vs
+          </span>
+
+          {/* The overlay above is decorative markup — avatars, plates, badges.
+              This is the sentence a screen reader gets instead. */}
+          <p className="sr-only">{courtSummary(teamA, teamB)}</p>
+        </>
       )}
     </div>
   )
 }
 
-function PlayerMark({ player, x, y }: { player: CourtSide[number]; x: number; y: number }) {
-  const { name, tier } = player
-  // This mark predates photos and draws its own circle rather than using
-  // <Avatar>, because it has to be SVG to sit on the court — so the photo case
-  // is spelled out again here. The white rim is the same either way.
-  const photo = photoOf(player.id)
+/** Two players, stacked, filling their half of the court. */
+function TeamHalf({ side, meId }: { side: CourtSide; meId?: string | null }) {
   return (
-    <g>
-      {photo ? (
-        <>
-          <image
-            href={photo}
-            x={x - 11}
-            y={y - 11}
-            width="22"
-            height="22"
-            preserveAspectRatio="xMidYMid slice"
-            style={{ clipPath: 'circle(50%)' }}
-          />
-          <circle cx={x} cy={y} r="11" fill="none" stroke={palette.surface} strokeWidth="2" />
-        </>
-      ) : (
-        <>
-          <circle
-            cx={x}
-            cy={y}
-            r="11"
-            fill={avatarColor(name)}
-            stroke={palette.surface}
-            strokeWidth="2"
-          />
-          <text
-            x={x}
-            y={y}
-            textAnchor="middle"
-            dominantBaseline="central"
-            fill={palette.surface}
-            fontSize="9.5"
-            fontWeight="600"
-          >
-            {initials(name)}
-          </text>
-        </>
-      )}
-      {/* Tier rides the avatar rather than the name line, so the four levels on
-          court can be compared without reading any words. */}
-      {tier && (
-        <>
-          <rect
-            x={x + 1}
-            y={y + 4}
-            width="18"
-            height="10"
-            rx="5"
-            fill={palette.surfaceDarker}
-            stroke={palette.surface}
-            strokeWidth="1.5"
-          />
-          <text
-            x={x + 10}
-            y={y + 9.5}
-            textAnchor="middle"
-            dominantBaseline="central"
-            fill={palette.accent}
-            fontSize="6.5"
-            fontWeight="700"
-          >
-            {TIER_SHORT[tier]}
-          </text>
-        </>
-      )}
-    </g>
+    <div className="grid grid-rows-2">
+      {side.map((player, i) => (
+        <PlayerMark key={player.id ?? i} player={player} me={!!meId && player.id === meId} />
+      ))}
+    </div>
   )
 }
 
-/** "Ana & Ben" — first names only, because the diagram is glanced at, not read. */
-function firstNames(side: CourtSide): string {
-  return side.map((p) => p.name.trim().split(/\s+/)[0] || p.name).join(' & ')
+/**
+ * A quadrant has to hold the avatar and the plate at every width, and the court
+ * is 2.2:1, so its height is the card's width / 4.4. The narrowest phone gives
+ * 320 - 40 (main px-5) - 32 (Card p-4) = 248px of court, so 56px per quadrant.
+ * `sm` (32) + gap (2) + plate (18.5) = 52.5 fits; `md` (40) does not. Which is
+ * also the size TierBadge was drawn for. Bump either number and 320px breaks.
+ */
+function PlayerMark({ player, me }: { player: CourtSide[number]; me: boolean }) {
+  return (
+    <div className="flex min-w-0 flex-col items-center justify-center gap-0.5 px-1">
+      <Avatar
+        id={player.id}
+        name={player.name}
+        size="sm"
+        // White rim, as on the SVG marks this replaces: the court underneath is
+        // tinted, and the page-coloured ring would read as a smudge on it.
+        ring="surface"
+        // Tier rides the avatar rather than the name plate, so the four levels
+        // on court can be compared without reading any words.
+        badge={player.tier && <TierBadge tier={player.tier} />}
+      />
+      {/* A plate, not bare text: the court's service lines are white 1.5px and
+          run straight under this row. `truncate` needs min-w-0 above it. */}
+      <span
+        className={`max-w-full truncate rounded-full px-1.5 py-px text-[11px] leading-[1.5] font-semibold ${
+          // Colour is not the only cue — the plate says "You" as well. Inverted
+          // rather than tinted so it cannot be read as a status.
+          me ? 'bg-ink text-surface' : 'bg-surface/90 text-ink'
+        }`}
+      >
+        {me ? 'You' : player.name}
+      </span>
+    </div>
+  )
+}
+
+/** "Ana and Ben versus Cara and Dan" — the court, read aloud. */
+export function courtSummary(teamA: CourtSide, teamB: CourtSide): string {
+  const side = (s: CourtSide) => s.map((p) => p.name).join(' and ')
+  return `${side(teamA)} versus ${side(teamB)}`
 }

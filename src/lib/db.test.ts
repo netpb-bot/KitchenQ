@@ -1,12 +1,23 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import {
   debounce,
+  joinUrl,
   nameTaken,
   normalizeName,
   randomCode,
   unsettled,
   type LedgerEntry,
 } from './db'
+
+// The QR code is only ever this string. A renamed param or a mangled code
+// scans to a Join screen with an empty box, which looks like the app is broken.
+describe('joinUrl', () => {
+  it('round-trips the code through the query param Join reads', () => {
+    const url = new URL(joinUrl(randomCode(), 'https://kitchen-q.vercel.app'))
+    expect(url.pathname).toBe('/join')
+    expect(url.searchParams.get('code')).toMatch(/^[A-Z2-9]{6}$/)
+  })
+})
 
 describe('randomCode', () => {
   const codes = Array.from({ length: 500 }, randomCode)

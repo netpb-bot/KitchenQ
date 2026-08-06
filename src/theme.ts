@@ -104,6 +104,8 @@ export const TEXT_PAIRS: Array<[PaletteKey, PaletteKey]> = [
   ['ink', 'warnFill'],
   ['surface', 'primary'],
   ['surface', 'danger'],
+  // The court's "You" plate, inverted so it cannot be mistaken for a status.
+  ['surface', 'ink'],
 
   // Dark hero cards. `brand` is legible here even though it is illegal on
   // white — the LIVE pill keeps its fill against a near-black card.
