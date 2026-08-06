@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState } from 'react'
+import type { ReactNode } from 'react'
 import {
   Flag,
   Handshake,
@@ -15,13 +16,16 @@ import {
   TIER_LABEL,
   addPlayer,
   cancelMatch,
+  clearCourtLineup,
   isGuest,
   requestPair,
   respondPair,
   setCourtCount,
+  setCourtLineup,
   setPlayerStatus,
   startMatch,
   useAction,
+  type CourtPin,
   type Match,
   type Member,
   type PairRequest,
@@ -37,6 +41,7 @@ import {
   queueOrder,
   typicalMatchMs,
   type Lineup,
+  type Pins,
   type QueuePlayer,
   type Upcoming,
 } from '../lib/queue'
@@ -67,6 +72,8 @@ export type LiveData = {
   clubMembers: Member[]
   /** Open asks and live pairings. Answered ones are not fetched. */
   pairRequests: PairRequest[]
+  /** Lineup slots the host has fixed by hand, one row per slot. */
+  courtPins: CourtPin[]
 }
 
 export function LiveSession({
@@ -78,8 +85,20 @@ export function LiveSession({
   admin: boolean
   reload: () => void
 }) {
-  const { session, me, players, matches, pairRequests } = data
+  const { session, me, players, matches, pairRequests, courtPins } = data
   const [adding, setAdding] = useState(false)
+
+  // Rows to slots. Sparse by design — a court the host half-filled, or one whose
+  // pinned player has gone home, leaves holes for the engine to fill.
+  const pins: Pins = useMemo(() => {
+    const out: Pins = new Map()
+    for (const pin of courtPins) {
+      const slots = out.get(pin.court_number) ?? []
+      slots[pin.slot] = pin.member_id
+      out.set(pin.court_number, slots)
+    }
+    return out
+  }, [courtPins])
 
   const accepted = useMemo(
     () =>
@@ -145,8 +164,17 @@ export function LiveSession({
           : now,
       }
     })
-    return forecast(waiting, courts, history, typicalMs)
-  }, [session.court_count, live, finished, waiting, typicalMs, now])
+    return forecast(waiting, courts, history, typicalMs, pins)
+  }, [session.court_count, live, finished, waiting, typicalMs, now, pins])
+
+  // Who is spoken for by which *other* court, so the bench can say so. The bench
+  // still offers them: taking a player off court 2's next-up and onto court 1's
+  // is the point, and `set_court_lineup` unpins them there as it pins them here.
+  const elsewhere = useMemo(() => {
+    const out = new Map<string, number>()
+    for (const c of plan.courts) for (const id of everyone(c.lineup)) out.set(id, c.court)
+    return out
+  }, [plan])
 
   // A forecast for a court that is still playing is a guess; only a court
   // standing empty gets to offer a startable lineup.
@@ -223,6 +251,8 @@ export function LiveSession({
               meId={me?.id ?? null}
               upNext={plan.courts.find((c) => c.court === court) ?? null}
               waiting={waiting}
+              elsewhere={elsewhere}
+              pinned={pins.has(court)}
               now={now}
               reload={reload}
             />
@@ -234,7 +264,8 @@ export function LiveSession({
               admin={admin}
               suggestion={suggestions.get(court) ?? null}
               waiting={waiting}
-              claimedElsewhere={claimedByOtherCourts(suggestions, court)}
+              elsewhere={elsewhere}
+              pinned={pins.has(court)}
               reload={reload}
             />
           )
@@ -265,23 +296,6 @@ export function LiveSession({
       )}
     </>
   )
-}
-
-/**
- * Players spoken for by a *different* open court. This court's own picks are
- * excluded deliberately: swapping someone out of the lineup has to put them
- * back on the bench, or the host can't undo the swap.
- */
-function claimedByOtherCourts(
-  suggestions: Map<number, Lineup>,
-  court: number,
-): Set<string> {
-  const claimed = new Set<string>()
-  for (const [other, lineup] of suggestions) {
-    if (other === court) continue
-    for (const id of everyone(lineup)) claimed.add(id)
-  }
-  return claimed
 }
 
 function everyone(lineup: Lineup): string[] {
@@ -415,6 +429,8 @@ function LiveCourt({
   meId,
   upNext,
   waiting,
+  elsewhere,
+  pinned,
   now,
   reload,
 }: {
@@ -428,6 +444,8 @@ function LiveCourt({
   /** Who is forecast onto this court once this match ends. */
   upNext: Upcoming | null
   waiting: QueuePlayer[]
+  elsewhere: Map<string, number>
+  pinned: boolean
   now: number
   reload: () => void
 }) {
@@ -486,11 +504,25 @@ function LiveCourt({
           <p className="text-caption font-semibold uppercase text-muted">
             Up next here · {waitLabel(upNext.freeAt, now)}
           </p>
-          <div className="mt-2 grid grid-cols-[1fr_auto_1fr] items-center gap-2">
-            <TeamSlots ids={upNext.lineup.teamA} offset={0} byId={byId} slot={null} locked />
-            <span className="text-caption font-semibold uppercase text-muted">vs</span>
-            <TeamSlots ids={upNext.lineup.teamB} offset={2} byId={byId} slot={null} locked />
-          </div>
+          {/* The host does not have to wait for the court to clear before fixing
+              who is on it next — that wait is exactly when there is time to. */}
+          {admin && session.status === 'live' ? (
+            <LineupEditor
+              sessionId={session.id}
+              court={match.court_number}
+              lineup={everyone(upNext.lineup)}
+              waiting={waiting}
+              elsewhere={elsewhere}
+              pinned={pinned}
+              reload={reload}
+            />
+          ) : (
+            <div className="mt-2 grid grid-cols-[1fr_auto_1fr] items-center gap-2">
+              <TeamSlots ids={upNext.lineup.teamA} offset={0} byId={byId} slot={null} locked />
+              <span className="text-caption font-semibold uppercase text-muted">vs</span>
+              <TeamSlots ids={upNext.lineup.teamB} offset={2} byId={byId} slot={null} locked />
+            </div>
+          )}
         </div>
       )}
     </Card>
@@ -565,23 +597,26 @@ function openCourtReason(status: SessionStatus, admin: boolean): string {
 }
 
 /**
- * `start_match` refuses for six reasons and says so in lowercase developer
- * English. The host is standing on a court with fifteen people waiting, so each
- * one becomes a sentence that names what to do about it.
+ * `start_match` and `set_court_lineup` refuse for the same handful of reasons
+ * and say so in lowercase developer English. The host is standing on a court
+ * with fifteen people waiting, so each one becomes a sentence that names what to
+ * do about it.
  */
-const START_MATCH_ERRORS: Record<string, string> = {
+const LINEUP_ERRORS: Record<string, string> = {
   'the session is not live': "This session hasn't started yet — tap Start session at the top.",
   'a match needs four players': 'Four players need to be in the queue before a match can start.',
   'those players are no longer all in the queue':
     'Someone in this lineup just left the queue. Pick again.',
   'only the host can start a match': 'Only the host can start a match.',
+  'only the host can set a lineup': 'Only the host can change who plays next.',
   'a player cannot be on court twice': 'That player is already in this lineup.',
 }
 
-function startMatchError(err: unknown): string {
+function lineupError(err: unknown): string {
   const raw = err instanceof Error ? err.message : String(err)
+  if (!raw) return ''
   if (isUnreachable(raw)) return "Can't reach the club right now — check your connection."
-  return START_MATCH_ERRORS[raw.toLowerCase()] ?? raw
+  return LINEUP_ERRORS[raw.toLowerCase()] ?? raw
 }
 
 function OpenCourt({
@@ -590,7 +625,8 @@ function OpenCourt({
   admin,
   suggestion,
   waiting,
-  claimedElsewhere,
+  elsewhere,
+  pinned,
   reload,
 }: {
   court: number
@@ -598,27 +634,18 @@ function OpenCourt({
   admin: boolean
   suggestion: Lineup | null
   waiting: QueuePlayer[]
-  claimedElsewhere: Set<string>
+  elsewhere: Map<string, number>
+  pinned: boolean
   reload: () => void
 }) {
-  // The host's edits to the suggested lineup, kept until the match starts.
-  const [override, setOverride] = useState<string[] | null>(null)
-  const [slot, setSlot] = useState<number | null>(null)
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState('')
 
-  const suggested = suggestion
-    ? [...suggestion.teamA, ...suggestion.teamB]
-    : null
-  const lineup = override ?? suggested
-
-  // A player picked up by another court, or who left the queue, invalidates the
-  // host's pending edit rather than starting a match that will be rejected.
-  useEffect(() => {
-    if (!override) return
-    const stillWaiting = new Set(waiting.map((p) => p.memberId))
-    if (!override.every((id) => stillWaiting.has(id))) setOverride(null)
-  }, [waiting, override])
+  // No local override any more. The host's edits are `court_pins` rows, which
+  // `forecast` has already folded into this suggestion — so the edit survives a
+  // refresh, reaches the co-host's phone, and a pinned player who leaves costs
+  // the lineup one slot instead of all four.
+  const lineup = suggestion ? everyone(suggestion) : null
 
   const state = courtState(session.status, admin, lineup !== null)
   const byId = new Map(waiting.map((p) => [p.memberId, p]))
@@ -675,36 +702,15 @@ function OpenCourt({
   }
 
   // `state === 'ready'` guarantees a lineup, which the compiler cannot see
-  // through courtState() — hence the assertions from here down.
-  const bench = waiting.filter(
-    (p) => !lineup!.includes(p.memberId) && !claimedElsewhere.has(p.memberId),
-  )
-
-  function swapPartners() {
-    // A 3-cycle through every way to pair the same four players: repeated taps
-    // reach all three pairings and come back, rather than toggling between two.
-    const [w, x, y, z] = lineup!
-    setOverride([w, z, x, y])
-    setSlot(null)
-  }
-
-  function substitute(memberId: string) {
-    if (slot === null) return
-    const next = [...lineup!]
-    next[slot] = memberId
-    setOverride(next)
-    setSlot(null)
-  }
-
+  // through courtState() — hence the assertion here.
   async function start() {
     setBusy(true)
     setError('')
     try {
       await startMatch(session.id, court, lineup!.slice(0, 2), lineup!.slice(2, 4))
-      setOverride(null)
       reload()
     } catch (err) {
-      setError(startMatchError(err))
+      setError(lineupError(err))
     }
     setBusy(false)
   }
@@ -716,10 +722,99 @@ function OpenCourt({
         <Pill tone="neutral">Next up</Pill>
       </div>
 
+      <LineupEditor
+        sessionId={session.id}
+        court={court}
+        lineup={lineup!}
+        waiting={waiting}
+        elsewhere={elsewhere}
+        pinned={pinned}
+        reload={reload}
+      >
+        <Button icon={Play} full loading={busy} onClick={() => void start()}>
+          Start match
+        </Button>
+      </LineupEditor>
+
+      {error && <p className="mt-3 text-meta font-medium text-danger">{error}</p>}
+    </Card>
+  )
+}
+
+/* ------------------------------------------------------------ lineup editing */
+
+/**
+ * The four names on a court's next-up, with the host's hands on them.
+ *
+ * One component for both card shapes — a court still playing and a court
+ * standing empty — because it is the same decision at two moments, and the host
+ * on a busy night makes it during the match, not in the ten seconds after it.
+ *
+ * Every edit writes all four ids through `set_court_lineup` rather than keeping
+ * a local override: a lineup only one phone knows about is a lineup the co-host
+ * standing at the other end will contradict.
+ */
+function LineupEditor({
+  sessionId,
+  court,
+  lineup,
+  waiting,
+  elsewhere,
+  pinned,
+  reload,
+  children,
+}: {
+  sessionId: string
+  court: number
+  /** Four member ids in slot order: 0 and 1 are team A, 2 and 3 team B. */
+  lineup: string[]
+  waiting: QueuePlayer[]
+  /** Which court, if any, already has each waiting player on its next-up. */
+  elsewhere: Map<string, number>
+  /** This court is running on a host lineup, so it can be handed back. */
+  pinned: boolean
+  reload: () => void
+  /** Rendered first in the action row — the open court's Start button. */
+  children?: ReactNode
+}) {
+  const [slot, setSlot] = useState<number | null>(null)
+  const [busy, raw, run] = useAction()
+  const byId = new Map(waiting.map((p) => [p.memberId, p]))
+
+  // Players claimed by another court stay on the bench, labelled. Hiding them
+  // was right when a lineup was one court's private guess; now that pinning is
+  // a session-wide fact, tapping one is how a host moves them across.
+  const bench = waiting.filter((p) => !lineup.includes(p.memberId))
+
+  const pin = (next: string[]) =>
+    run(async () => {
+      setSlot(null)
+      await setCourtLineup(sessionId, court, next)
+      reload()
+    })
+
+  function swapPartners() {
+    // A 3-cycle through every way to pair the same four players: repeated taps
+    // reach all three pairings and come back, rather than toggling between two.
+    const [w, x, y, z] = lineup
+    pin([w, z, x, y])
+  }
+
+  function substitute(memberId: string) {
+    if (slot === null) return
+    const next = [...lineup]
+    next[slot] = memberId
+    pin(next)
+  }
+
+  const error = lineupError(raw)
+
+  return (
+    <>
       <div className="mt-3 grid grid-cols-[1fr_auto_1fr] items-center gap-2">
-        <TeamSlots ids={lineup!.slice(0, 2)} offset={0} byId={byId} slot={slot} onPick={setSlot} />
+        <TeamSlots ids={lineup.slice(0, 2)} offset={0} byId={byId} slot={slot} onPick={setSlot} />
         <span className="text-caption font-semibold uppercase text-muted">vs</span>
-        <TeamSlots ids={lineup!.slice(2, 4)} offset={2} byId={byId} slot={slot} onPick={setSlot} />
+        <TeamSlots ids={lineup.slice(2, 4)} offset={2} byId={byId} slot={slot} onPick={setSlot} />
       </div>
 
       {slot !== null && (
@@ -728,16 +823,25 @@ function OpenCourt({
             {bench.length > 0 ? 'Swap in a player from the queue' : 'Nobody else is waiting'}
           </p>
           <div className="mt-2 flex flex-wrap gap-2">
-            {bench.map((p) => (
-              <button
-                key={p.memberId}
-                onClick={() => substitute(p.memberId)}
-                className="kq-chip inline-flex items-center gap-2 rounded-full bg-surface px-3 py-1.5 text-meta font-medium text-ink transition-transform active:scale-95"
-              >
-                <Avatar id={p.memberId} name={p.name} size="sm" />
-                {p.name}
-              </button>
-            ))}
+            {bench.map((p) => {
+              const on = elsewhere.get(p.memberId)
+              return (
+                <button
+                  key={p.memberId}
+                  disabled={busy}
+                  onClick={() => substitute(p.memberId)}
+                  className="kq-chip inline-flex items-center gap-2 rounded-full bg-surface px-3 py-1.5 text-meta font-medium text-ink transition-transform active:scale-95 disabled:opacity-50"
+                >
+                  <Avatar id={p.memberId} name={p.name} size="sm" />
+                  {p.name}
+                  {on !== undefined && (
+                    // Not a refusal — a warning that taking them costs court N
+                    // its player, which the host may well intend.
+                    <span className="text-caption text-muted">court {on} next</span>
+                  )}
+                </button>
+              )
+            })}
             <button
               onClick={() => setSlot(null)}
               className="kq-chip rounded-full px-3 py-1.5 text-meta font-medium text-muted"
@@ -750,15 +854,47 @@ function OpenCourt({
 
       {error && <p className="mt-3 text-meta font-medium text-danger">{error}</p>}
 
-      <div className="mt-4 flex gap-2">
-        <Button icon={Play} full loading={busy} onClick={() => void start()}>
-          Start match
-        </Button>
-        <Button variant="secondary" icon={Shuffle} onClick={swapPartners} className="px-3">
-          Swap
+      {/* On an open court these sit beside Start, the action the host came for.
+          On a court still playing there is no Start, and the row centres — the
+          match card's own buttons are the loud ones, and this block is a notice
+          board the host happens to be able to edit. */}
+      <div className={`mt-4 flex items-center gap-2 ${children ? '' : 'justify-center'}`}>
+        {children}
+        {/* Full size, not `sm`, when it stands alone: `sm` opts out of the 44px
+            floor and is only ever for a control sitting beside a big one. */}
+        <Button
+          variant="secondary"
+          icon={Shuffle}
+          disabled={busy}
+          onClick={swapPartners}
+          className={children ? 'px-3' : ''}
+        >
+          {children ? 'Swap' : 'Swap teams'}
         </Button>
       </div>
-    </Card>
+
+      {pinned && (
+        // Without this a host who overrode a lineup could never stop overriding
+        // it — the pins would just sit there outvoting the queue all night.
+        <div className="mt-1 flex justify-center">
+          <Button
+            variant="ghost"
+            size="sm"
+            icon={Undo2}
+            disabled={busy}
+            onClick={() =>
+              run(async () => {
+                setSlot(null)
+                await clearCourtLineup(sessionId, court)
+                reload()
+              })
+            }
+          >
+            Use the suggested lineup
+          </Button>
+        </div>
+      )}
+    </>
   )
 }
 

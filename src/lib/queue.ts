@@ -225,6 +225,59 @@ export type Forecast = {
 }
 
 /**
+ * Lineups the host has fixed by hand, keyed by court number: four slots, where
+ * 0 and 1 are team A and 2 and 3 are team B.
+ *
+ * Sparse on purpose. A host who has named two of the four leaves the other two
+ * `undefined`, and so does a pin whose player has since gone home — the engine
+ * fills whatever is left rather than the whole edit collapsing.
+ */
+export type Pins = Map<number, (string | undefined)[]>
+
+/**
+ * The host's lineup for one court, completed from the queue — or null if this
+ * court is the engine's to decide after all.
+ *
+ * ponytail: the slots the host left open are filled in plain queue order, not
+ * by the balance-and-variety search in `lineupCost`. Once a host has taken a
+ * court over, "the longest waiter takes the empty slot" is a rule they can
+ * predict; optimising around fixed slots would mean teaching `pickNextMatch` to
+ * enumerate partial lineups, which is surgery on the one function the whole
+ * product rests on. Upgrade path if the filled slots ever look unfair: give
+ * `pickNextMatch` a `forced: (string | undefined)[]` and filter `pairings`.
+ */
+function pinnedLineup(
+  slots: (string | undefined)[] | undefined,
+  available: QueuePlayer[],
+): Lineup | null {
+  if (!slots) return null
+
+  const free = new Set(available.map((p) => p.memberId))
+  // A pinned player who is resting, gone, or already claimed by a court freeing
+  // sooner loses their slot. Only their slot: the other three stand.
+  const four = Array.from({ length: 4 }, (_, i) =>
+    slots[i] && free.has(slots[i]!) ? slots[i] : undefined,
+  )
+  if (four.every((id) => id === undefined)) return null
+
+  const taken = new Set(four.filter((id): id is string => id !== undefined))
+  const fill = queueOrder(available.filter((p) => !taken.has(p.memberId)))
+
+  let next = 0
+  for (let i = 0; i < 4; i++) {
+    if (four[i]) continue
+    const p = fill[next++]
+    // Not enough people left to finish the court. Same answer as an engine pick
+    // that comes up short: no lineup.
+    if (!p) return null
+    four[i] = p.memberId
+  }
+
+  const [w, x, y, z] = four as string[]
+  return { teamA: [w, x], teamB: [y, z] }
+}
+
+/**
  * How long a match takes tonight, for wait estimates.
  *
  * Median, not mean: one match left running while everyone went to dinner would
@@ -272,6 +325,7 @@ export function forecast(
   courts: CourtSlot[],
   history: PastMatch[],
   typicalMs: number,
+  pins: Pins = new Map(),
 ): Forecast {
   const claimed = new Set<string>()
   const upcoming: Upcoming[] = []
@@ -279,10 +333,11 @@ export function forecast(
 
   // Stable sort, so courts freeing at the same moment keep their numbering.
   for (const slot of [...courts].sort((a, b) => a.freeAt - b.freeAt)) {
-    const lineup = pickNextMatch(
-      waiting.filter((p) => !claimed.has(p.memberId)),
-      history,
-    )
+    const available = waiting.filter((p) => !claimed.has(p.memberId))
+    // The host's word first. Falls through to the engine when this court has no
+    // pins, or when nobody the host pinned is still available to play.
+    const lineup =
+      pinnedLineup(pins.get(slot.court), available) ?? pickNextMatch(available, history)
     if (!lineup) break
 
     upcoming.push({ court: slot.court, lineup, freeAt: slot.freeAt })

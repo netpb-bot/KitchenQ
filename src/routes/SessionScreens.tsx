@@ -25,6 +25,7 @@ import {
   getSession,
   isAdmin,
   joinUrl,
+  listCourtPins,
   listLedger,
   listMatches,
   listMembers,
@@ -87,18 +88,30 @@ function useSessionView(): [
 
   const [view, reload] = useAsync(async (): Promise<View> => {
     const session = await getSession(id)
-    const [me, players, matches, clubMembers, club, ledger, pairRequests] = await Promise.all([
-      myMember(session.club_id),
-      listSessionPlayers(id),
-      listMatches(id),
-      listMembers(session.club_id),
-      // Only members may read the club, and this screen is reachable by someone
-      // who hasn't joined yet. Its currency is a nicety; the screen is not.
-      getClub(session.club_id).catch(() => null),
-      listLedger(id),
-      listPairRequests(id),
-    ])
-    return { session, me, players, matches, clubMembers, club, ledger, pairRequests }
+    const [me, players, matches, clubMembers, club, ledger, pairRequests, courtPins] =
+      await Promise.all([
+        myMember(session.club_id),
+        listSessionPlayers(id),
+        listMatches(id),
+        listMembers(session.club_id),
+        // Only members may read the club, and this screen is reachable by someone
+        // who hasn't joined yet. Its currency is a nicety; the screen is not.
+        getClub(session.club_id).catch(() => null),
+        listLedger(id),
+        listPairRequests(id),
+        listCourtPins(id),
+      ])
+    return {
+      session,
+      me,
+      players,
+      matches,
+      clubMembers,
+      club,
+      ledger,
+      pairRequests,
+      courtPins,
+    }
   }, [id])
 
   useEffect(() => watchSession(id, reload, setConnection), [id])

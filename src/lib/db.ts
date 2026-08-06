@@ -595,6 +595,52 @@ export async function respondPair(requestId: string, next: PairStatus): Promise<
   ok(await supabase.rpc('respond_pair', { target_request: requestId, next_status: next }))
 }
 
+/* --------------------------------------------------------------- court pins */
+
+/** One slot of a lineup the host fixed by hand. Slots 0-1 are team A, 2-3 team B. */
+export type CourtPin = {
+  session_id: string
+  court_number: number
+  slot: number
+  member_id: string
+}
+
+export async function listCourtPins(sessionId: string): Promise<CourtPin[]> {
+  await ensureSession()
+  return ok(
+    await supabase
+      .from('court_pins')
+      .select('session_id, court_number, slot, member_id')
+      .eq('session_id', sessionId),
+  )
+}
+
+/**
+ * Fix all four players on a court's next-up, in slot order.
+ *
+ * Always all four, never the one that changed: the server pins what it is given
+ * and unpins those four from wherever else they were, which is also how a player
+ * moves from one court's next-up to another's.
+ */
+export async function setCourtLineup(
+  sessionId: string,
+  court: number,
+  memberIds: string[],
+): Promise<void> {
+  ok(
+    await supabase.rpc('set_court_lineup', {
+      target_session: sessionId,
+      court,
+      member_ids: memberIds,
+    }),
+  )
+}
+
+/** Hand the court back to the queue engine. */
+export async function clearCourtLineup(sessionId: string, court: number): Promise<void> {
+  ok(await supabase.rpc('clear_court_lineup', { target_session: sessionId, court }))
+}
+
 /* ------------------------------------------------------------------ matches */
 
 const MATCH_COLS =
@@ -792,6 +838,7 @@ export function watchSession(
     .on('postgres_changes', { event: '*', schema: 'public', table: 'matches', filter }, changed)
     .on('postgres_changes', { event: '*', schema: 'public', table: 'ledger_entries', filter }, changed)
     .on('postgres_changes', { event: '*', schema: 'public', table: 'pair_requests', filter }, changed)
+    .on('postgres_changes', { event: '*', schema: 'public', table: 'court_pins', filter }, changed)
     .on('postgres_changes', { event: '*', schema: 'public', table: 'sessions', filter: `id=eq.${sessionId}` }, changed)
     .subscribe((status) => {
       if (status === 'SUBSCRIBED') {

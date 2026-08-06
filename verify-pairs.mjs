@@ -64,12 +64,19 @@ async function statusOf(client, requestId) {
   return data?.status ?? null
 }
 
-/** Their club_members.id in this club, which is what every id below refers to. */
+/**
+ * Their club_members.id in this club, which is what every id below refers to.
+ *
+ * Filtered to their own row: `members_read` lets any signed-in user read the
+ * whole club, so without the user_id this asked for one row and got six.
+ */
 async function memberIdOf(client, clubId) {
+  const { data: auth } = await client.auth.getUser()
   const { data } = await client
     .from('club_members')
     .select('id')
     .eq('club_id', clubId)
+    .eq('user_id', auth.user.id)
     .single()
   return data.id
 }

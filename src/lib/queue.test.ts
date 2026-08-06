@@ -391,3 +391,77 @@ describe('forecast', () => {
     expect(onCourtAt.size).toBe(11)
   })
 })
+
+describe('forecast with host pins', () => {
+  const NOW = 1_000_000
+  const courts = (...freeAt: number[]) =>
+    freeAt.map((at, i) => ({ court: i + 1, freeAt: at }))
+  const pins = (entries: Record<number, (string | undefined)[]>) =>
+    new Map(Object.entries(entries).map(([court, slots]) => [Number(court), slots]))
+
+  // The host looked at eight people and named four. The engine's opinion about
+  // balance and repeats does not get to overrule that, and neither does the
+  // order it would have put them in — the slots are the teams.
+  it('uses a full pin verbatim, in slot order', () => {
+    const { courts: up } = forecast(
+      roster(8),
+      courts(NOW),
+      [],
+      10 * MIN,
+      pins({ 1: ['p7', 'p2', 'p5', 'p0'] }),
+    )
+    expect(up[0].lineup).toEqual({ teamA: ['p7', 'p2'], teamB: ['p5', 'p0'] })
+  })
+
+  // The reason pins are stored per slot rather than per lineup. One player
+  // going home used to invalidate the host's whole edit; now it costs the one
+  // slot, and the longest-waiting player left fills it.
+  it('drops only the slot whose player is no longer waiting', () => {
+    const waiting = roster(8).filter((p) => p.memberId !== 'p5')
+    const { courts: up } = forecast(
+      waiting,
+      courts(NOW),
+      [],
+      10 * MIN,
+      pins({ 1: ['p7', 'p2', 'p5', 'p0'] }),
+    )
+    expect(up[0].lineup.teamA).toEqual(['p7', 'p2'])
+    expect(up[0].lineup.teamB[1]).toBe('p0')
+    // p1 is the longest waiter not already spoken for.
+    expect(up[0].lineup.teamB[0]).toBe('p1')
+  })
+
+  it('falls back to the engine when nobody pinned is still available', () => {
+    const waiting = roster(8).filter((p) => !['p6', 'p7'].includes(p.memberId))
+    const { courts: up } = forecast(
+      waiting,
+      courts(NOW),
+      [],
+      10 * MIN,
+      pins({ 1: [undefined, undefined, 'p6', 'p7'] }),
+    )
+    expect(everyone(up[0].lineup).sort()).toEqual(['p0', 'p1', 'p2', 'p3'])
+  })
+
+  // A pinned player is claimed like any other, so the second court cannot
+  // propose them too — the bug that would put someone on two courts at once.
+  it('does not offer a pinned player to another court', () => {
+    const { courts: up } = forecast(
+      roster(8),
+      courts(NOW, NOW),
+      [],
+      10 * MIN,
+      pins({ 1: ['p7', 'p2', 'p5', 'p0'] }),
+    )
+    expect(up).toHaveLength(2)
+    expect(new Set([...everyone(up[0].lineup), ...everyone(up[1].lineup)]).size).toBe(8)
+    expect(everyone(up[1].lineup)).not.toContain('p7')
+  })
+
+  // The path every court takes on a night nobody overrides anything.
+  it('is unchanged from the engine when there are no pins', () => {
+    const engine = forecast(roster(9), courts(NOW, NOW + 5 * MIN), [], 10 * MIN)
+    const pinned = forecast(roster(9), courts(NOW, NOW + 5 * MIN), [], 10 * MIN, new Map())
+    expect(pinned).toEqual(engine)
+  })
+})
